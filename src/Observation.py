@@ -1,0 +1,327 @@
+import shutil
+import os
+import subprocess
+
+from astropy.io import fits
+
+from EMIR_file_processing import *
+from templates import *
+
+DEFAULT_FLAT_FIELD_FILE = 'master_flat_spec.fits'
+FLAT_FIELD_FILENAME = 'master_flat_%s.fits'
+
+class Observation(object):
+
+	def __init__(self, observation_dir, result_dir=None):
+
+		'''
+		Constructor for Observation object. 
+	
+		Instance Variables:
+			- name (str): the name of the observation directory	
+			- obs_dir (str): the directory where the raw istrument data is
+			- result_dir (str): the directory where all outputs will be stored 
+					(defaults to [obs_dir]/results)
+			- emir_path (str): the directory where the EMIR inputs/outputs are processed
+			- qc (Quality_Control): stored information from the quality control file
+			- object_files (dict): a dictionary of the raw object data files (key: GRISM, value: list of files)
+			- arc_files (dict): a dictionary of the raw arc data files (key: GRISM, value: list of files)
+			- flat_files (dict): a dictionary of the raw flat data files (key: GRISM, value: list of files)
+			- must_generate_flat_field (bool): flag to determine if the flat field must be generated or copied from defaults
+	
+		'''
+
+		self.name = observation_dir.split('/')[-1]
+		if self.name == '':
+			self.name = observation_dir.split('/')[-2]
+	
+		self.obs_dir = observation_dir
+		self.result_dir = self._get_result_dir(result_dir)
+
+		self.qc = self._get_quality_control_info()
+		self.object_files, self.arc_files, self.flat_files = self._get_files()
+		
+		self.must_generate_flat_field = (len(self.flat_files) != 0 )
+
+		self._build_EMIR_directory()
+
+	def _get_result_dir(self, result_dir):
+		'''
+		Finds the results directory and creates it if it doesn't yet exist.
+		'''
+
+		result_dir = result_dir if result_dir is not None else os.path.join(self.obs_dir, "results")
+
+		if not os.path.exists(self.obs_dir):
+			raise FileNotFoundError("observation directory %s does not exist"%self.obs_dir)
+
+		if not os.path.exists(result_dir):
+			os.mkdir(result_dir)
+
+		return result_dir
+
+	def _get_quality_control_info(self):
+		'''
+		Finds and parses the quality control file. 
+		'''		
+
+		for f in os.listdir(self.obs_dir):
+			if f[-4:] == ".txt" and f[:3] == "GTC":
+				qc_filename = os.path.join(self.obs_dir,f)
+				break
+		try:	
+			return Quality_Control(qc_filename)
+		except UnboundLocalError:
+			raise FileNotFoundError("No valid quality control file")
+			
+
+	def _get_files(self):
+		'''
+		Gets a tuple of the file names for each obervation type and filter. 
+		Checks that there are enough files for analysis.
+		'''
+		
+		tables = ['object_table', 'arc_table', 'flat_table']
+		files = [{}, {}, {}]
+		for i, tname in enumerate(tables):
+			t = getattr(self.qc, tname)
+			files[i] = {key: [] for key in list(set(t['FILTER']))}
+			for row in t:
+				files[i][row['FILTER']] += [row['IMAGE']]
+
+			pathtype = tname[:-len('_table')]
+			path = os.path.join(self.obs_dir,pathtype)
+			setattr(self, "%s_path"%pathtype, path)
+		
+		return tuple(files)		
+		
+
+
+	def _build_EMIR_directory(self):
+		'''
+		Builds the necessary files to do EMIR runs.
+		'''
+
+		setattr(self, 'emir_path', os.path.join(self.result_dir, "EMIR_files"))
+		if os.path.exists(self.emir_path):
+			shutil.rmtree(self.emir_path)
+		os.mkdir(self.emir_path)
+		
+		os.mkdir(os.path.join(self.emir_path, "data"))
+		
+		for fil in self.object_files:
+			self._generate_control_file(fil)
+			for analysis_type in ['arc', 'object']:
+				self._generate_obs_res(analysis_type, fil)
+
+		emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
+		for f in os.listdir(emir_defaults_dir):
+
+			if f == DEFAULT_FLAT_FIELD_FILE and self.must_generate_flat_field:
+				self._generate_flat_field()
+			else:
+				source_file = os.path.join(emir_defaults_dir, f)
+				target_file = os.path.join(self.emir_path, 'data', f)
+				shutil.copyfile(source_file, target_file)
+
+	def _generate_flat_field(self): 
+		'''
+		Takes flat field files and generates the flat field file for EMIR analysis.
+		'''
+
+		file_base = os.path.join(self.obs_dir, 'flat/')
+
+		for fil in self.flat_files:
+			for i, f in enumerate(self.flat_files[fil]):
+				im = fits.open(file_base+f)[1].data
+				if i == 0:
+					ff_coadd = im
+				else:
+					ff_coadd += im
+
+			emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
+			default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
+			default_fits.data = ff_coadd
+			default_fits.writeto(os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME%fil))
+
+
+	def initialize(self, analysis_type, filter_type):
+		'''
+		Prepares the emir directory to run the analysis type.
+		'''
+
+		self._copy_files(analysis_type, filter_type)
+		self._generate_control_file(filter_type)
+		self._generate_obs_res(analysis_type, filter_type)
+
+	def _copy_files(self, analysis_type, filter_type):
+		try:
+			file_dict = getattr(self, "%s_files"%analysis_type)
+			data_file_list = file_dict[filter_type]
+			data_path = os.path.join(self.obs_dir, analysis_type)
+			for fname in data_file_list:
+				source_path = os.path.join(data_path, fname)
+				target_path = os.path.join(self.emir_path, "data", fname)
+				shutil.copyfile(source_path, target_path)
+
+		except FileNotFoundError:
+			raise ValueError("%s is not a valid analysis type (options: 'object', 'arc', 'flat')"%(analysis_type))
+		except KeyError:
+			raise KeyError("%s is not a valid filter type (options: %s)"\
+							%(filter_type, str(list(file_dict.keys()))))
+
+
+	def _generate_control_file(self, fil):
+		'''
+		Generates the control file used in the EMIR analysis.
+		'''
+
+		with open(os.path.join(self.emir_path, 'control_%s.yaml'%fil), 'w') as f:
+			flat_fname = "master_flat_%s.fits"%fil
+			f.write(CONTROL_YAML_TEMPLATE%(flat_fname,flat_fname))
+			f.close()
+
+	def _generate_obs_res(self, analysis_type, filter_type):
+		'''
+		Generates all observation result files for all GRISMs and analysis types.
+		'''
+		file_list = '' 
+		with open(os.path.join(self.emir_path, '%s_obs_res_%s.yaml'%(analysis_type,filter_type)), 'w') as f:
+			try:
+				for i, filename in enumerate(getattr(self, "%s_files"%analysis_type)[filter_type]):
+					if analysis_type == 'arc':
+						file_list += " - %s\n"%filename
+					else:
+						file_list = " - %s\n"%filename
+						text = OBS_RES_TEMPLATE%(self.name+"_"+filename.split('-')[0], file_list)
+						f.write(text)
+						if i < len(getattr(self, "%s_files"%analysis_type)[filter_type])-1:
+							f.write('---\n')
+				
+				if analysis_type == 'arc':
+					text = OBS_RES_TEMPLATE%(self.name+'_arc', file_list)
+					f.write(text)
+				
+			except KeyError:
+				#raise ValueError("attempting to generate an observation result file without proper files")
+				pass
+
+			f.close()
+
+	def run_analysis(self, filter_type):
+	
+		self.rectify_and_calibrate(filter_type)
+		self.ABBA_subtract(filter_type)
+		self.convert_flux(filter_type)
+		# save final results
+
+	def rectify_and_analyze(self, analysis_type, filter_type):
+		'''
+		Run the numina recipe for rectification and calibration.
+		'''
+
+		orig_cwd = os.getcwd()
+		os.chdir(self.emir_path)
+
+		result = subprocess.run('numina run %s_obs_res_%s.yaml -r control_%s.yaml'\
+								%(analysis_type,filter_type,filter_type),
+							shell=True, capture_output=True, text=True)
+
+		with open("emir_out.txt", 'w') as f:
+			f.write(result.stdout+'\n\n')
+			f.write(result.stderr+'\n\n')
+			f.close()		
+
+		os.chdir(orig_cwd)
+
+	def ABBA_subtract(self, filter_type):
+
+		self._prepare_ABBA(filter_type)
+		self._subtract_and_save_ABBA(filter_type)
+
+	def _prepare_ABBA(self, filter_type):
+		'''
+		Prepares the directory to save ABBA information, checks that 
+		there is rectified and calibrated data.
+		'''
+		# if observation result file not generated, must run initialization
+		obs_res_file = os.path.join(self.emir_path, "object_obs_res_%s.yaml"%filter_type)
+		if not os.path.exists(obs_res_file):
+			raise FileNotFoundError("Must generate object result file from _initialize")
+		# if 'obsid%s_%s_results/reduced_mos.fits' not generated, must run rectification and calibration
+		has_run_rect_and_cal = False
+		for f in os.listdir(self.emir_path):
+			comps = f.split('_') 
+			if len(f) < 3: continue
+			if self.name in comps[0] and comps[1].isdigit() and "results" in comps[2]:
+				has_run_rect_and_cal = True
+		if not has_run_rect_and_cal:
+			raise FileNotFoundError("Must run rectify and calibrate on object file")
+
+		abba_dir = os.path.join(self.result_dir, 'ABBA/')
+		setattr(self, "abba_dir", abba_dir)
+		if not os.path.exists(abba_dir):
+			os.mkdir(abba_dir)
+
+
+	def _get_calibrated_data(self, filter_type): 
+		
+		A = [] ; B = []
+		fname_base = os.path.join(self.emir_path,'obsid%s_%s_results/reduced_mos.fits')
+
+		for row in self.qc.object_table:
+			if row['FILTER'] != filter_type: continue
+
+			fID = row['IMAGE'].split('-')[0]
+			fname = fname_base%(self.name, fID)
+
+			if row['TELPOS'] == 'NOD_A':
+				A += [fits.open(fname)[0].data.astype(float)]
+			else:
+				B += [fits.open(fname)[0].data.astype(float)]
+
+		return A, B
+
+	def _subtract_and_save_ABBA(self, filter_type, only_AB=False):
+		'''
+		Performs the actual subtraction and saves the results.
+		'''
+		A, B = self._get_calibrated_data(filter_type)
+
+		if len(A) != 2 and len(B) != 2:
+			self._subtract_and_save_non_ABBA(filter_type)
+
+		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
+
+		primary_hdu = fits.ImageHDU(A[0] + A[1] - B[0] - B[1])
+		primary_hdu.writeto(fname, overwrite=True)
+
+
+	def _subtract_and_save_non_ABBA(self, filter_type):
+		raise NotImplementedError("Cannot perform non-ABBA subtraction")
+
+
+	def convert_flux(self, filter_type):
+		
+		# check that ABBA exists
+		# extract ABBA spectrum (and save wavelength v. counts plot)
+		# get response curve
+		# do flux conversion
+
+		raise NotImplementedError
+
+
+	def _clean_emir_directory(self):
+		for f in os.listdir(os.path.join(self.emir_path, "data/")):
+			if f[0].isalpha(): continue
+			os.remove(os.path.join(self.emir_path, "data/", f))
+
+	def _clean_files(self):
+		try:
+			shutil.rmtree(self.emir_path)
+			shutil.rmtree(self.result_dir)
+		except FileNotFoundError:
+			pass
+	
+
+
