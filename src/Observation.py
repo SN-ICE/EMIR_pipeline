@@ -1,6 +1,7 @@
 import shutil
 import os
 import subprocess
+import numpy as np
 
 from astropy.io import fits
 
@@ -278,15 +279,17 @@ class Observation(object):
 			if row['TELPOS'] == 'NOD_A':
 				A += [fits.open(fname)[0].data.astype(float)]
 			else:
+				fits_file = fits.open(fname)
+				header = fits_file[0].header
 				B += [fits.open(fname)[0].data.astype(float)]
 
-		return A, B
+		return A, B, header
 
 	def _subtract_and_save_ABBA(self, filter_type, only_AB=False):
 		'''
 		Performs the actual subtraction and saves the results.
 		'''
-		A, B = self._get_calibrated_data(filter_type)
+		A, B, header = self._get_calibrated_data(filter_type)
 
 		if len(A) != 2 and len(B) != 2:
 			self._subtract_and_save_non_ABBA(filter_type)
@@ -294,11 +297,31 @@ class Observation(object):
 		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
 
 		primary_hdu = fits.ImageHDU(A[0] + A[1] - B[0] - B[1])
+		
+		for k in header:
+			try: 
+				primary_hdu.header[k] = header[k]
+			except:
+				pass
 		primary_hdu.writeto(fname, overwrite=True)
 
 
 	def _subtract_and_save_non_ABBA(self, filter_type):
-		raise NotImplementedError("Cannot perform non-ABBA subtraction")
+
+		A, B, header = self._get_calibrated_data(filter_type)
+		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
+		
+		final_image = np.zeros(A[0].shape)
+		for a,b in zip(A,B):
+			final_image += (a-b)
+
+		primary_hdu = fits.ImageHDU(final_image)
+		for k in header:
+			try:
+				primary_hdu.header[k] = header[k]
+			except:
+				pass
+		primary_hdu.writeto(fname, overwrite=True)
 
 
 	def convert_flux(self, filter_type):
