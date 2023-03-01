@@ -73,7 +73,7 @@ class Observation(object):
 		try:	
 			return Quality_Control(qc_filename)
 		except UnboundLocalError:
-			raise FileNotFoundError("No valid quality control file")
+			raise FileNotFoundError("No valid quality control file for observation %s"%self.name)
 			
 
 	def _get_files(self):
@@ -134,7 +134,10 @@ class Observation(object):
 
 		for fil in self.flat_files:
 			for i, f in enumerate(self.flat_files[fil]):
-				im = fits.open(file_base+f)[1].data
+				try:
+					im = fits.open(file_base+f)[1].data
+				except IndexError:
+					im = fits.open(file_base+f)[0].data
 				if i == 0:
 					ff_coadd = im
 				else:
