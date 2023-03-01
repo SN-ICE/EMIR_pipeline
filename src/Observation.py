@@ -81,11 +81,15 @@ class Observation(object):
 		Gets a tuple of the file names for each obervation type and filter. 
 		Checks that there are enough files for analysis.
 		'''
-		
+
 		tables = ['object_table', 'arc_table', 'flat_table']
 		files = [{}, {}, {}]
 		for i, tname in enumerate(tables):
+
 			t = getattr(self.qc, tname)
+			if "FILTER" not in t.columns or 'IMAGE' not in t.columns:
+				raise ValueError('quality control file not parsed correctly for obs %s'%self.name)
+
 			files[i] = {key: [] for key in list(set(t['FILTER']))}
 			for row in t:
 				files[i][row['FILTER']] += [row['IMAGE']]
@@ -278,6 +282,7 @@ class Observation(object):
 
 			fID = row['IMAGE'].split('-')[0]
 			fname = fname_base%(self.name, fID)
+			if not os.path.exists(fname): continue
 
 			if row['TELPOS'] == 'NOD_A':
 				A += [fits.open(fname)[0].data.astype(float)]
@@ -285,6 +290,9 @@ class Observation(object):
 				fits_file = fits.open(fname)
 				header = fits_file[0].header
 				B += [fits.open(fname)[0].data.astype(float)]
+
+		if len(A) == 0 or len(B) == 0:
+			raise ValueError("quality control file has incorrect names (observation %s)"%self.name)
 
 		return A, B, header
 

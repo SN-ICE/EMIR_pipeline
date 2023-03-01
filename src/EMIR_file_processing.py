@@ -29,7 +29,7 @@ class Quality_Control(object):
 		i = 0
 		in_table = False ; current_table = None ; header = None
 		for line in f:
-			if "IMAGE" in line:
+			if "IMAGE" in line.split():
 				header = line.split()
 				in_table = True
 				current_table = list(d.keys())[0]
