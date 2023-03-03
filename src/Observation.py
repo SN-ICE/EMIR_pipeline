@@ -13,7 +13,7 @@ FLAT_FIELD_FILENAME = 'master_flat_%s.fits'
 
 class Observation(object):
 
-	def __init__(self, observation_dir, result_dir=None):
+	def __init__(self, observation_dir, result_dir=None, conda_check=True):
 
 		'''
 		Constructor for Observation object. 
@@ -31,6 +31,10 @@ class Observation(object):
 			- must_generate_flat_field (bool): flag to determine if the flat field must be generated or copied from defaults
 	
 		'''
+
+		# check that conda environment is active 
+		if os.environ['CONDA_DEFAULT_ENV'] == 'base' or not conda_check:
+			raise EnvironmentError("EMIR environment has not been activated")
 
 		self.name = observation_dir.split('/')[-1]
 		if self.name == '':
