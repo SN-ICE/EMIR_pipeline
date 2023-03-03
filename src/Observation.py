@@ -2,11 +2,13 @@ import shutil
 import os
 import subprocess
 import numpy as np
+from scipy.interpolate import interp1d
 
 from astropy.io import fits
 
 from EMIR_file_processing import *
 from templates import *
+from reduction_tools import *
 
 DEFAULT_FLAT_FIELD_FILE = 'master_flat_spec.fits'
 FLAT_FIELD_FILENAME = 'master_flat_%s.fits'
@@ -48,7 +50,10 @@ class Observation(object):
 		
 		self.must_generate_flat_field = (len(self.flat_files) != 0 )
 
-		self._build_EMIR_directory()
+		if not os.path.exists(os.path.join(self.result_dir, "EMIR_directory")):
+			self._build_EMIR_directory()
+		if os.path.exists(os.path.join(self.result_dir, "ABBA")):
+			self.abba_dir = os.path.join(self.result_dir, "ABBA")
 
 	def _get_result_dir(self, result_dir):
 		'''
@@ -348,6 +353,65 @@ class Observation(object):
 
 		raise NotImplementedError
 
+	def _get_tabulated_interpolation(self, res_curve_path):
+
+		fits_file = fits.open(res_curve_path)
+		f = fits_file[0]
+
+		flux_tab = f.data
+		wavelengths_tab = pixels_to_wavelength(f.header)
+
+		fits_file.close()
+
+		return interp1d(wavelengths_tab, flux_tab, kind="linear")
+
+	def _make_prelim_resp_curve(self, tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs):
+
+		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
+		response_prelim = tabulated_interpolation(wave) / counts
+		if 'prelim_smooth_radius' in kwargs:
+			response_prelim = smooth(response_prelim, radius=kwargs['prelim_smooth_radius']) 
+
+		hdu_sp = fits.PrimaryHDU(data=response_prelim, header=header)
+		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, overwrite=True)
+
+		return response_prelim
+
+	def _add_telluric_correction(self, file_path, filter_type, **kwargs):
+
+		with fits.open(file_path) as f: 
+			header = f[0].header
+			flux = f[0].data
+			wave = pixels_to_wavelength(header)
+
+		telluric = get_atmospheric_spectrum(wave)
+		response_notell = flux / telluric
+		if 'telluric_smooth_radius' in kwargs:
+			response_notell = smooth(response_notell, radius=kwargs['telluric_smooth_radius'])
+
+		hdu_sp = fits.PrimaryHDU(data=response_notell, header=header)
+		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve_telluric_corr.fits'%filter_type, overwrite=True)
+
+		return response_notell
+
+	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
+		'''Makes a response curve of the data.'''
+		setattr(self, 'response_curve_dir', os.path.join(self.result_dir, "response_curve"))
+		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
+
+		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
+		counts, wave, header = get_spectrum(ABBA_file, filter_type, kwargs.get('SN_position', None))
+
+		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
+		hdu_sp.writeto(self.response_curve_dir+'/%s_spectrum_raw.fits'%filter_type, overwrite=True)
+
+		if 'raw_smooth_radius' in kwargs:
+			counts = smooth(counts, kwargs['raw_smooth_radius'])
+
+		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
+		if kwargs.get('correct_telluric_lines', True):
+			self._add_telluric_correction(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, 
+									  	  filter_type, **kwargs)
 
 	def _clean_emir_directory(self):
 		for f in os.listdir(os.path.join(self.emir_path, "data/")):
