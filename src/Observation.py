@@ -54,6 +54,8 @@ class Observation(object):
 			self._build_EMIR_directory()
 		if os.path.exists(os.path.join(self.result_dir, "ABBA")):
 			self.abba_dir = os.path.join(self.result_dir, "ABBA")
+		if os.path.exists(os.path.join(self.result_dir, "response_curve")):
+			self.response_curve_dir = os.path.join(self.result_dir, "response_curve")
 
 	def _get_result_dir(self, result_dir):
 		'''
@@ -269,6 +271,7 @@ class Observation(object):
 		has_run_rect_and_cal = False
 		for f in os.listdir(self.emir_path):
 			comps = f.split('_') 
+			print(self.emir_path, f)
 			if len(f) < 3: continue
 			if self.name in comps[0] and comps[1].isdigit() and "results" in comps[2]:
 				has_run_rect_and_cal = True
@@ -412,6 +415,20 @@ class Observation(object):
 		if kwargs.get('correct_telluric_lines', True):
 			self._add_telluric_correction(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, 
 									  	  filter_type, **kwargs)
+
+	def get_response_curve(self, filter_type, telluric_corr=False):
+		
+		if telluric_corr:
+			fname = self.response_curve_dir+'/%s_response_curve_telluric_corr.fits'%filter_type
+		else:
+			fname = self.response_curve_dir+'/%s_response_curve.fits'%filter_type
+
+		with fits.open(fname) as f:
+			header = f[0].header
+			flux = f[0].data
+			wave = pixels_to_wavelength(header)
+
+		return wave, flux
 
 	def _clean_emir_directory(self):
 		for f in os.listdir(os.path.join(self.emir_path, "data/")):
