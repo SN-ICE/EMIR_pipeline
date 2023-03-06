@@ -35,7 +35,7 @@ class Observation(object):
 		'''
 
 		# check that conda environment is active 
-		if os.environ['CONDA_DEFAULT_ENV'] == 'base' or not conda_check:
+		if os.environ['CONDA_DEFAULT_ENV'] == 'base' and conda_check:
 			raise EnvironmentError("EMIR environment has not been activated")
 
 		self.name = observation_dir.split('/')[-1]
