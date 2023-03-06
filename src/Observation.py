@@ -271,7 +271,6 @@ class Observation(object):
 		has_run_rect_and_cal = False
 		for f in os.listdir(self.emir_path):
 			comps = f.split('_') 
-			print(self.emir_path, f)
 			if len(f) < 3: continue
 			if self.name in comps[0] and comps[1].isdigit() and "results" in comps[2]:
 				has_run_rect_and_cal = True
@@ -346,16 +345,6 @@ class Observation(object):
 				pass
 		primary_hdu.writeto(fname, overwrite=True)
 
-
-	def convert_flux(self, filter_type):
-		
-		# check that ABBA exists
-		# extract ABBA spectrum (and save wavelength v. counts plot)
-		# get response curve
-		# do flux conversion
-
-		raise NotImplementedError
-
 	def _get_tabulated_interpolation(self, res_curve_path):
 
 		fits_file = fits.open(res_curve_path)
@@ -429,6 +418,13 @@ class Observation(object):
 			wave = pixels_to_wavelength(header)
 
 		return wave, flux
+
+	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
+		
+		wave, resp_curve = calibration_obs.get_response_curve(filter_type, kwargs.get("telluric_correction", True))
+		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, kwargs.get('SN_position', None))
+
+		return wave, raw_data*resp_curve
 
 	def _clean_emir_directory(self):
 		for f in os.listdir(os.path.join(self.emir_path, "data/")):
