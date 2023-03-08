@@ -2,7 +2,7 @@ import shutil
 import os
 import subprocess
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, splrep, splev
 
 from astropy.io import fits
 
@@ -375,8 +375,30 @@ class Observation(object):
 
 		return response_notell
 
+	def _do_abba_fitting(self, counts, wave, filter_type, header, **kwargs):
+
+		spacing = kwargs.get('sample_spacing', len(counts)//25)
+		if 'feature_mask' in kwargs:
+			available_pixels = np.arange(0,len(counts), 1)[kwargs['feature_mask']]
+			sample = np.array([pix for i,pix in enumerate(available_pixels) if i%spacing==0])
+		else:
+			sample = np.array([i for i in range(len(counts)) if i%spacing==0])
+
+		sampled_counts = counts[sample]
+		sampled_wave = wave[sample]
+
+		tck = splrep(sampled_wave, sampled_counts)
+		counts = splev(wave, tck)
+	
+		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
+		hdu_sp.writeto(self.response_curve_dir+'/%s_splined_response.fits'%filter_type, overwrite=True)
+
+		return counts
+
+
 	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
 		'''Makes a response curve of the data.'''
+
 		setattr(self, 'response_curve_dir', os.path.join(self.result_dir, "response_curve"))
 		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
 
@@ -388,6 +410,9 @@ class Observation(object):
 
 		if 'raw_smooth_radius' in kwargs:
 			counts = smooth(counts, kwargs['raw_smooth_radius'])
+
+		if kwargs.get("best_fit", True):
+			counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
 
 		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
 		if kwargs.get('correct_telluric_lines', True):
