@@ -119,11 +119,10 @@ class Observation(object):
 		'''
 
 		setattr(self, 'emir_path', os.path.join(self.result_dir, "EMIR_files"))
-		if os.path.exists(self.emir_path):
-			shutil.rmtree(self.emir_path)
-		os.mkdir(self.emir_path)
-		
-		os.mkdir(os.path.join(self.emir_path, "data"))
+		if not os.path.exists(self.emir_path):
+			os.mkdir(self.emir_path)
+		if not os.path.exists(os.path.join(self.emir_path, "data")):
+			os.mkdir(os.path.join(self.emir_path, "data"))
 		
 		for fil in self.object_files:
 			self._generate_control_file(fil)
@@ -161,7 +160,7 @@ class Observation(object):
 			emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
 			default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
 			default_fits.data = ff_coadd
-			default_fits.writeto(os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME%fil))
+			default_fits.writeto(os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME%fil), overwrite=True)
 
 
 	def initialize(self, analysis_type, filter_type):
@@ -441,7 +440,6 @@ class Observation(object):
 		return wave, raw_data*resp_curve
 
 	def get_raw_spectrum(self, filter_type, **kwargs):
-		print(kwargs)
 		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 
 											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
 		return wave, raw_data
