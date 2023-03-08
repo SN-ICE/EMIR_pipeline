@@ -318,13 +318,7 @@ class Observation(object):
 
 		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
 
-		primary_hdu = fits.ImageHDU(A[0] + A[1] - B[0] - B[1])
-		
-		for k in header:
-			try: 
-				primary_hdu.header[k] = header[k]
-			except:
-				pass
+		primary_hdu = fits.ImageHDU(data=A[0] + A[1] - B[0] - B[1], header=header)
 		primary_hdu.writeto(fname, overwrite=True)
 
 
@@ -337,12 +331,7 @@ class Observation(object):
 		for a,b in zip(A,B):
 			final_image += (a-b)
 
-		primary_hdu = fits.ImageHDU(final_image)
-		for k in header:
-			try:
-				primary_hdu.header[k] = header[k]
-			except:
-				pass
+		primary_hdu = fits.ImageHDU(data=final_image, header=header)
 		primary_hdu.writeto(fname, overwrite=True)
 
 	def _get_tabulated_interpolation(self, res_curve_path):
