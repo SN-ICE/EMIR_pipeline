@@ -415,6 +415,12 @@ class Observation(object):
 
 		return wave, raw_data*resp_curve
 
+	def get_raw_spectrum(self, filter_type, **kwargs):
+		print(kwargs)
+		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 
+											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
+		return wave, raw_data
+
 	def _clean_emir_directory(self):
 		for f in os.listdir(os.path.join(self.emir_path, "data/")):
 			if f[0].isalpha(): continue
