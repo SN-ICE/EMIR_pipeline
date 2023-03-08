@@ -4,6 +4,8 @@ import numpy as np
 from astropy.io import fits
 from scipy.interpolate import interp1d
 
+from matplotlib import pyplot as plt
+
 def get_extrema_row(ABBA):
     
     max_row = -np.inf ; min_row = np.inf
@@ -20,12 +22,15 @@ def get_extrema_row(ABBA):
     return max_i, min_i
 
 def pixels_to_wavelength(file_header):
- 
+
     naxis1 = file_header['naxis1']
     crpix1 = file_header['crpix1']
     crval1 = file_header['crval1']
-    cdelt1 = file_header['cdelt1']
-    
+    try:
+        cdelt1 = file_header['cdelt1']
+    except KeyError:
+        cdelt1 = file_header['cd1_1']
+
     wavelengths = crval1 + (np.arange(1, naxis1 + 1) - crpix1) * cdelt1
     return wavelengths
     
@@ -44,7 +49,7 @@ def smooth(y, radius=10):
     
     return np.array([np.nan]*(radius//2 + 1) + smoothed_data + [np.nan]*(radius//2))
 
-def get_spectrum(ABBA_fname, grism, SN_position=None):
+def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     
     ABBA_file = fits.open(ABBA_fname)
     ABBA = ABBA_file[1].data
@@ -54,9 +59,21 @@ def get_spectrum(ABBA_fname, grism, SN_position=None):
     if SN_position is None:
         max_i, min_i = get_extrema_row(ABBA)
     else:
-        min_i, max_i = SN_position
+        new_im = np.zeros_like(ABBA)
+        new_im[SN_position-60:SN_position+60,:] = ABBA[SN_position-60:SN_position+60,:]
+        min_i, max_i = get_extrema_row(new_im)
     
     wavelengths = pixels_to_wavelength(ABBA_header)
+
+    if debug:
+        fig, axs = plt.subplots(2, figsize=(20,5))
+
+        r = 20
+        axs[0].imshow(ABBA[max_i-r:max_i+r, :])
+        axs[1].imshow(ABBA[min_i-r:min_i+r, :])
+        plt.suptitle("%s raw data"%grism)
+        plt.show()
+
     spectrum = combine_ABBA(ABBA, max_i, min_i)
     exptime = ABBA_header['exptime']
     spectrum = spectrum / (2 * exptime)

@@ -411,7 +411,7 @@ class Observation(object):
 	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
 		
 		wave, resp_curve = calibration_obs.get_response_curve(filter_type, kwargs.get("telluric_correction", True))
-		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, kwargs.get('SN_position', None))
+		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
 
 		return wave, raw_data*resp_curve
 
