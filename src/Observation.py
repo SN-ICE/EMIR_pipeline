@@ -348,7 +348,23 @@ class Observation(object):
 	def _make_prelim_resp_curve(self, tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs):
 
 		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
-		response_prelim = tabulated_interpolation(wave) / counts
+		tabulated_flux = tabulated_interpolation(wave)
+
+		if 'best_fit' in kwargs:
+			spacing = kwargs.get('sample_spacing', len(counts)//25)
+			if 'feature_mask' in kwargs:
+				available_pixels = np.arange(0,len(counts), 1)[kwargs['feature_mask']]
+				sample = np.array([pix for i,pix in enumerate(available_pixels) if i%spacing==0])
+			else:
+				sample = np.array([i for i in range(len(counts)) if i%spacing==0])
+
+			sampled_flux = tabulated_interpolation(wave)[sample]
+			sampled_wave = wave[sample]
+
+			tck = splrep(sampled_wave, sampled_flux)
+			tabulated_flux = splev(wave, tck)
+
+		response_prelim = tabulated_flux / counts
 		if 'prelim_smooth_radius' in kwargs:
 			response_prelim = smooth(response_prelim, radius=kwargs['prelim_smooth_radius']) 
 
