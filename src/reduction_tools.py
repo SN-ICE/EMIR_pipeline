@@ -58,8 +58,11 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     
     if SN_position is None:
         max_i, min_i = get_extrema_row(ABBA)
+    elif type(SN_position) == tuple:
+        min_i, max_i = SN_position
     else:
-        new_im = np.zeros_like(ABBA)
+        new_im = np.empty_like(ABBA)
+        new_im[:] = np.nan
         new_im[SN_position-60:SN_position+60,:] = ABBA[SN_position-60:SN_position+60,:]
         min_i, max_i = get_extrema_row(new_im)
     
@@ -68,9 +71,12 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     if debug:
         fig, axs = plt.subplots(2, figsize=(20,5))
 
+        print("final positions: %i, %i"%(max_i, min_i))
         r = 20
-        axs[0].imshow(ABBA[max_i-r:max_i+r, :])
-        axs[1].imshow(ABBA[min_i-r:min_i+r, :])
+        axs[0].imshow(ABBA)
+        axs[0].set_ylim(max_i-r, max_i+r)
+        axs[1].imshow(ABBA)
+        axs[1].set_ylim(min_i-r, min_i+r)
         plt.suptitle("%s raw data"%grism)
         plt.show()
 
