@@ -347,24 +347,11 @@ class Observation(object):
 
 	def _make_prelim_resp_curve(self, tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs):
 
-		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
-		tabulated_flux = tabulated_interpolation(wave)
-
-		if 'best_fit' in kwargs:
-			spacing = kwargs.get('sample_spacing', len(counts)//25)
-			if 'feature_mask' in kwargs:
-				available_pixels = np.arange(0,len(counts), 1)[kwargs['feature_mask']]
-				sample = np.array([pix for i,pix in enumerate(available_pixels) if i%spacing==0])
-			else:
-				sample = np.array([i for i in range(len(counts)) if i%spacing==0])
-
-			sampled_flux = tabulated_interpolation(wave)[sample]
-			sampled_wave = wave[sample]
-
-			tck = splrep(sampled_wave, sampled_flux)
-			tabulated_flux = splev(wave, tck)
-
+		counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
+		tabulated_flux = self._get_tablulated_flux(tabulated_spectrum_path, wave, **kwargs)
+		
 		response_prelim = tabulated_flux / counts
+
 		if 'prelim_smooth_radius' in kwargs:
 			response_prelim = smooth(response_prelim, radius=kwargs['prelim_smooth_radius']) 
 
@@ -372,6 +359,27 @@ class Observation(object):
 		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, overwrite=True)
 
 		return response_prelim
+
+	def _get_tablulated_flux(self, tabulated_spectrum_path, wave, **kwargs):
+		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
+		tabulated_flux = tabulated_interpolation(wave)
+
+		if 'sample_points' not in kwargs:
+			spacing = kwargs.get('sample_spacing', len(wave)//25)
+			sample = np.array([i for i in range(len(wave)) if i%spacing==0])
+		else:
+			sample = []
+			for point in kwargs['sample_points']:
+				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0]]
+			sample = np.array(sample)
+
+		sampled_flux = tabulated_interpolation(wave)[sample]
+		sampled_wave = wave[sample]
+
+		tck = splrep(sampled_wave, sampled_flux)
+		tabulated_flux = splev(wave, tck)
+
+		return tabulated_flux
 
 	def _add_telluric_correction(self, file_path, filter_type, **kwargs):
 
@@ -423,12 +431,6 @@ class Observation(object):
 		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
 		hdu_sp.writeto(self.response_curve_dir+'/%s_spectrum_raw.fits'%filter_type, overwrite=True)
 
-		if 'raw_smooth_radius' in kwargs:
-			counts = smooth(counts, kwargs['raw_smooth_radius'])
-
-		if kwargs.get("best_fit", True):
-			counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
-
 		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
 		if kwargs.get('correct_telluric_lines', True):
 			self._add_telluric_correction(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, 
@@ -450,7 +452,7 @@ class Observation(object):
 
 	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
 		
-		wave, resp_curve = calibration_obs.get_response_curve(filter_type, kwargs.get("telluric_correction", True))
+		wave, resp_curve = calibration_obs.get_response_curve(filter_type, kwargs.get("telluric_correction", False))
 		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
 
 		return wave, raw_data*resp_curve
