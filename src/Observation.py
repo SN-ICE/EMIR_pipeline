@@ -370,7 +370,8 @@ class Observation(object):
 		else:
 			sample = []
 			for point in kwargs['sample_points']:
-				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0]]
+				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0][0]]
+
 			sample = np.array(sample)
 
 		sampled_flux = tabulated_interpolation(wave)[sample]
@@ -426,7 +427,9 @@ class Observation(object):
 		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
 
 		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
-		counts, wave, header = get_spectrum(ABBA_file, filter_type, kwargs.get('SN_position', None))
+		counts, wave, header = get_spectrum(ABBA_file, filter_type, 
+											kwargs.get('SN_position', None),
+											kwargs.get('raw_debug', False))
 
 		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
 		hdu_sp.writeto(self.response_curve_dir+'/%s_spectrum_raw.fits'%filter_type, overwrite=True)

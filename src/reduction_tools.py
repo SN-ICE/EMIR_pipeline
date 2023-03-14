@@ -55,7 +55,7 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     ABBA = ABBA_file[1].data
     ABBA_header = ABBA_file[1].header
     ABBA_file.close()
-    
+
     if SN_position is None:
         max_i, min_i = get_extrema_row(ABBA)
     elif type(SN_position) == tuple:
@@ -71,7 +71,6 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     if debug:
         fig, axs = plt.subplots(2, figsize=(20,5))
 
-        print("final positions: %i, %i"%(max_i, min_i))
         r = 20
         axs[0].imshow(ABBA)
         axs[0].set_ylim(max_i-r, max_i+r)
