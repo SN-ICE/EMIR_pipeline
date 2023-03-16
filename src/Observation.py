@@ -401,11 +401,14 @@ class Observation(object):
 
 	def _do_abba_fitting(self, counts, wave, filter_type, header, **kwargs):
 
-		spacing = kwargs.get('sample_spacing', len(counts)//25)
-		if 'feature_mask' in kwargs:
-			available_pixels = np.arange(0,len(counts), 1)[kwargs['feature_mask']]
-			sample = np.array([pix for i,pix in enumerate(available_pixels) if i%spacing==0])
+		if 'sample_points' in kwargs:
+			sample = []
+			for point in kwargs['sample_points']:
+				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0][0]]
+
+			sample = np.array(sample)
 		else:
+			spacing = kwargs.get('sample_spacing', len(counts)//25)
 			sample = np.array([i for i in range(len(counts)) if i%spacing==0])
 
 		sampled_counts = counts[sample]

@@ -8,6 +8,8 @@ The purpose of this repository is to create a file managing python interface for
 - Install PyEMIR as specified [here](https://pyemir.readthedocs.io/en/v0.16.0/installation/index.html#install-in-conda)
 - add `path/to/EMIR_pipeline/src` to your $PYTHONPATH
 - store `path/to/EMIR_pipeline/src` to a system variable called $EMIR_PIPE
+- `pip install PyQt5`
+- `pip install mpl-interactions`
 
 When running any of these functions, be sure to activate your EMIR conda environment, probably with something like 
 ```
