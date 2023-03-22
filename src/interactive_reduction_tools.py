@@ -109,7 +109,7 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 	interp = interp1d(wave, raw, kind="linear")
 	tab_interp = interp1d(tab_wave, tab_data, kind="linear")
 
-	fig, ax = plt.subplots(3+num_points, sharex=True, height_ratio=[num_points+2]*3+[1]*num_points)#, figsize=(20,15))
+	fig, ax = plt.subplots(3+num_points, sharex=True, height_ratios=[num_points+2]*3+[1]*num_points)#, figsize=(20,15))
 	#plt.subplots_adjust(bottom=0.35, top=0.9)
 	
 	button, sliders = init_widgets(wave, num_points, ax[3:])
