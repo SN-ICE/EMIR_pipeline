@@ -1,5 +1,5 @@
 # EMIR_pipeline
-A pipeline for reducing spectra from raw EMIR data.
+An interactive pipeline for reducing spectra from raw EMIR data.
 
 The purpose of this repository is to create a file managing python interface for the PyEMIR analysis code. This pipeline is built on top of the [PyEMIR package](https://pyemir.readthedocs.io/en/v0.16.0/) maintained by Sergio Pascual and Nicolás Cardiel. 
 
@@ -21,4 +21,8 @@ conda activate emir
 
 ## How to Use the Pipeline
 
-Take a look at `EMIR_pipeline/examples/OB0011_example.ipynb` for an example of how to run this on one observation.
+There are a series of tutorials in the `examples/` file. It would be best to go through them in the following order:
+1. [`OB0011_example.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0011_example.ipynb)
+2. [`OB0012_response_curve.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0012_response_curve.ipynb)
+3. [`OB0012_interactive_response_curve.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0012_interactive_response_curve.ipynb)
+4. [`OB0011_interactive_example.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0011_interactive_example.ipynb)
