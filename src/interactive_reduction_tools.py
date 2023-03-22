@@ -92,6 +92,8 @@ def interactive_SN_position_finder(o, filter_type):
 	iplt.axvline(ctrls["low"], ax=axs[1], c="k")
 	iplt.axvline(ctrls["high"], ax=axs[1], c="k")
 	[a.legend(loc='upper right') for a in axs]
+
+	plt.suptitle(o.name+" "+filter_type)
 	plt.show()
 	return button, ctrls.params	
 
@@ -156,6 +158,7 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 		plt.close()
 	button.on_clicked(close_and_save)
 	
+	plt.suptitle(o_calib.name+" "+filter_type)
 	plt.show()
 	return button, sliders
 
