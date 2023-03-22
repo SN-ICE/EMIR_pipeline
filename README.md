@@ -5,7 +5,7 @@ The purpose of this repository is to create a file managing python interface for
 
 ## Installation
 
-- Install PyEMIR as specified [here](https://pyemir.readthedocs.io/en/stable/installation/index.html#install-in-conda)
+- Install PyEMIR __with python 3.11__ as specified [here](https://pyemir.readthedocs.io/en/stable/installation/index.html#install-in-conda). If you don't install with 3.11 or higher there will be issues with the interactive options.
 - add `path/to/EMIR_pipeline/src` to your $PYTHONPATH
 - store `path/to/EMIR_pipeline/src` to a system variable called $EMIR_PIPE
 - `pip install PyQt5`
