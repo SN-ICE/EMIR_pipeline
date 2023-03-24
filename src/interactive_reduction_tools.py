@@ -112,15 +112,15 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 	tab_interp = interp1d(tab_wave, tab_data, kind="linear")
 
 	fig, ax = plt.subplots(3+num_points, sharex=True, height_ratios=[num_points+2]*3+[1]*num_points)#, figsize=(20,15))
-	#plt.subplots_adjust(bottom=0.35, top=0.9)
-	
-	button, sliders = init_widgets(wave, num_points, ax[3:])
-	plot_raw_data(wave, raw, tab_interp, ax)
 
 	if 'sample_points' in kwa:
 		init_points = kwa['sample_points']
 	else:
 		init_points = [wave[0]+(wave[-1]-wave[0])*i/num_points for i in range(num_points)]
+
+	cl_b, res_b, sliders = init_widgets(wave, init_points, ax[3:])
+	plot_raw_data(wave, raw, tab_interp, ax)
+
 	pts, tab_pts, resp_pts = plot_sample_points(init_points, interp, tab_interp, ax)
 	line, tab_line, resp_line = plot_spline_fits(wave, o_calib, tabulated_flux_path, filter_type, 
 												 init_points, interp, tab_interp, ax, **(kwargs|kwa))
@@ -156,24 +156,29 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 			pickle.dump(d, f)
 
 		plt.close()
-	button.on_clicked(close_and_save)
-	
+	cl_b.on_clicked(close_and_save)
+
+	def reset(val):
+		[sliders[s].set_val(p) for s,p in zip(sliders, init_points)]
+	res_b.on_clicked(reset)
+
 	plt.suptitle(o_calib.name+" "+filter_type)
 	plt.show()
-	return button, sliders
+	return [cl_b, res_b], sliders
 
-def init_widgets(wave, num_points, slider_axs):
-	#slider_axs = [plt.axes([0.15, i+0.05, 0.65, 0.03]) 
-    # 	          for i in np.linspace(0,0.1, num_points)]
+def init_widgets(wave, init_points, slider_axs):
 	sliders = {'point %i'%i: Slider(slider_axs[i], label="", 
     	              valmin=wave[0], valmax=wave[-1], 
-        	          valinit=wave[0]+((wave[-1]-wave[0])*i/num_points)) 
-           		for i in range(num_points)}
+        	          valinit=p) 
+           		for i,p in enumerate(init_points)}
 
 	ax = plt.axes([0.01, 0.01, 0.1, 0.075])
-	cl_b = Button(ax, 'Finalize',color="yellow")
+	cl_b = Button(ax, 'Finalize', color="lightgreen")
 
-	return cl_b, sliders
+	ax = plt.axes([0.15,0.01,0.1,0.075])
+	reset_b = Button(ax, "Reset", color='mistyrose')
+	
+	return cl_b, reset_b, sliders
 
 def plot_raw_data(wave, raw, tab_interp, ax):
 	ax[0].plot(wave, raw, color=plt.cm.Set1(1), label='Raw Spectral Data')
