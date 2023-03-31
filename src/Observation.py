@@ -50,12 +50,11 @@ class Observation(object):
 		
 		self.must_generate_flat_field = (len(self.flat_files) != 0 )
 
+		self.emir_path = os.path.join(self.result_dir, 'EMIR_files')
+		self.abba_dir = os.path.join(self.result_dir, "ABBA")
+		self.response_curve_dir = os.path.join(self.result_dir, "response_curve")
 		if not os.path.exists(os.path.join(self.result_dir, "EMIR_directory")):
 			self._build_EMIR_directory()
-		if os.path.exists(os.path.join(self.result_dir, "ABBA")):
-			self.abba_dir = os.path.join(self.result_dir, "ABBA")
-		if os.path.exists(os.path.join(self.result_dir, "response_curve")):
-			self.response_curve_dir = os.path.join(self.result_dir, "response_curve")
 
 	def _get_result_dir(self, result_dir):
 		'''
@@ -118,7 +117,6 @@ class Observation(object):
 		Builds the necessary files to do EMIR runs.
 		'''
 
-		setattr(self, 'emir_path', os.path.join(self.result_dir, "EMIR_files"))
 		if not os.path.exists(self.emir_path):
 			os.mkdir(self.emir_path)
 		if not os.path.exists(os.path.join(self.emir_path, "data")):
@@ -148,19 +146,18 @@ class Observation(object):
 
 		for fil in self.flat_files:
 			for i, f in enumerate(self.flat_files[fil]):
-				try:
-					im = fits.open(file_base+f)[1].data
-				except IndexError:
-					im = fits.open(file_base+f)[0].data
+				fi = fits.open(file_base+f)
+				im = fi[1].data
 				if i == 0:
 					ff_coadd = im
 				else:
 					ff_coadd += im
-
+				fi.close()
 			emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
 			default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
 			default_fits.data = ff_coadd
 			default_fits.writeto(os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME%fil), overwrite=True)
+			default_fits.close()
 
 
 	def initialize(self, analysis_type, filter_type):
@@ -276,10 +273,8 @@ class Observation(object):
 		if not has_run_rect_and_cal:
 			raise FileNotFoundError("Must run rectify and calibrate on object file")
 
-		abba_dir = os.path.join(self.result_dir, 'ABBA/')
-		setattr(self, "abba_dir", abba_dir)
-		if not os.path.exists(abba_dir):
-			os.mkdir(abba_dir)
+		if not os.path.exists(self.abba_dir):
+			os.mkdir(self.abba_dir)
 
 
 	def _get_calibrated_data(self, filter_type): 
@@ -295,11 +290,13 @@ class Observation(object):
 			if not os.path.exists(fname): continue
 
 			if row['TELPOS'] == 'NOD_A':
-				A += [fits.open(fname)[0].data.astype(float)]
+				fi = fits.open(fname)
+				A += [fi[0].data.astype(float)]
 			else:
-				fits_file = fits.open(fname)
-				header = fits_file[0].header
-				B += [fits.open(fname)[0].data.astype(float)]
+				fi = fits.open(fname)
+				header = fi[0].header
+				B += [fi[0].data.astype(float)]
+			fi.close()
 
 		if len(A) == 0 or len(B) == 0:
 			raise ValueError("quality control file has incorrect names (observation %s)"%self.name)
@@ -333,71 +330,53 @@ class Observation(object):
 		primary_hdu = fits.ImageHDU(data=final_image, header=header)
 		primary_hdu.writeto(fname, overwrite=True)
 
-	def _get_tabulated_interpolation(self, res_curve_path):
+	###### RESPONSE CURVE #############
 
-		fits_file = fits.open(res_curve_path)
-		f = fits_file[0]
+	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
+		'''Makes a response curve of the data.'''
 
-		flux_tab = f.data
-		wavelengths_tab = pixels_to_wavelength(f.header)
+		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
 
-		fits_file.close()
+		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
+		counts, wave, header = get_spectrum(ABBA_file, filter_type, 
+											kwargs.get('SN_position', None),
+											kwargs.get('raw_debug', False))
 
-		return interp1d(wavelengths_tab, flux_tab, kind="linear")
+		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
+		
+	def get_response_curve(self, filter_type):
+		
+		fname = self.response_curve_dir+'/%s_response_curve.fits'%filter_type
+
+		#with fits.open(fname) as f:
+		#	header = f[0].header
+		#	flux = f[0].data
+		#	wave = pixels_to_wavelength(header)
+
+		wave, flux = fits_to_data(fname)
+
+		return wave, flux
+
 
 	def _make_prelim_resp_curve(self, tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs):
 
 		counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
 		tabulated_flux = self._get_tablulated_flux(tabulated_spectrum_path, wave, **kwargs)
 		
-		response_prelim = tabulated_flux / counts
+		response = tabulated_flux / counts
+
+		if kwargs.get('correct_telluric_lines', True):
+			telluric_corr = self._add_telluric_correction(counts, filter_type, **kwargs)
+			response = response / telluric_corr
+
 
 		if 'prelim_smooth_radius' in kwargs:
-			response_prelim = smooth(response_prelim, radius=kwargs['prelim_smooth_radius']) 
+			response = smooth(response, radius=kwargs['prelim_smooth_radius']) 
 
-		hdu_sp = fits.PrimaryHDU(data=response_prelim, header=header)
+		hdu_sp = fits.PrimaryHDU(data=response, header=header)
 		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, overwrite=True)
 
-		return response_prelim
-
-	def _get_tablulated_flux(self, tabulated_spectrum_path, wave, **kwargs):
-		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
-		tabulated_flux = tabulated_interpolation(wave)
-
-		if 'sample_points' not in kwargs:
-			spacing = kwargs.get('sample_spacing', len(wave)//25)
-			sample = np.array([i for i in range(len(wave)) if i%spacing==0])
-		else:
-			sample = []
-			for point in kwargs['sample_points']:
-				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0][0]]
-
-			sample = np.array(sample)
-
-		sampled_flux = tabulated_interpolation(wave)[sample]
-		sampled_wave = wave[sample]
-
-		tck = splrep(sampled_wave, sampled_flux)
-		tabulated_flux = splev(wave, tck)
-
-		return tabulated_flux
-
-	def _add_telluric_correction(self, file_path, filter_type, **kwargs):
-
-		with fits.open(file_path) as f: 
-			header = f[0].header
-			flux = f[0].data
-			wave = pixels_to_wavelength(header)
-
-		telluric = get_atmospheric_spectrum(wave)
-		response_notell = flux / telluric
-		if 'telluric_smooth_radius' in kwargs:
-			response_notell = smooth(response_notell, radius=kwargs['telluric_smooth_radius'])
-
-		hdu_sp = fits.PrimaryHDU(data=response_notell, header=header)
-		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve_telluric_corr.fits'%filter_type, overwrite=True)
-
-		return response_notell
+		return response
 
 	def _do_abba_fitting(self, counts, wave, filter_type, header, **kwargs):
 
@@ -422,43 +401,75 @@ class Observation(object):
 
 		return counts
 
+	def _get_tablulated_flux(self, tabulated_spectrum_path, wave, **kwargs):
+		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
+		tabulated_flux = tabulated_interpolation(wave)
 
-	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
-		'''Makes a response curve of the data.'''
-
-		setattr(self, 'response_curve_dir', os.path.join(self.result_dir, "response_curve"))
-		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
-
-		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
-		counts, wave, header = get_spectrum(ABBA_file, filter_type, 
-											kwargs.get('SN_position', None),
-											kwargs.get('raw_debug', False))
-
-		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
-		hdu_sp.writeto(self.response_curve_dir+'/%s_spectrum_raw.fits'%filter_type, overwrite=True)
-
-		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
-		if kwargs.get('correct_telluric_lines', True):
-			self._add_telluric_correction(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, 
-									  	  filter_type, **kwargs)
-
-	def get_response_curve(self, filter_type, telluric_corr=False):
-		
-		if telluric_corr:
-			fname = self.response_curve_dir+'/%s_response_curve_telluric_corr.fits'%filter_type
+		if 'sample_points' not in kwargs:
+			spacing = kwargs.get('sample_spacing', len(wave)//25)
+			sample = np.array([i for i in range(len(wave)) if i%spacing==0])
 		else:
-			fname = self.response_curve_dir+'/%s_response_curve.fits'%filter_type
+			sample = []
+			for point in kwargs['sample_points']:
+				sample += [np.where(np.abs(wave-point) == min(np.abs(wave-point)))[0][0]]
 
-		with fits.open(fname) as f:
-			header = f[0].header
-			flux = f[0].data
-			wave = pixels_to_wavelength(header)
+			sample = np.array(sample)
+
+		sampled_flux = tabulated_interpolation(wave)[sample]
+		sampled_wave = wave[sample]
+
+		tck = splrep(sampled_wave, sampled_flux)
+		tabulated_flux = splev(wave, tck)
+
+		return tabulated_flux
+
+	def _get_tabulated_interpolation(self, res_curve_path):
+
+		fits_file = fits.open(res_curve_path)
+		f = fits_file[0]
+
+		flux_tab = f.data
+		wavelengths_tab = pixels_to_wavelength(f.header)
+
+		fits_file.close()
+
+		return interp1d(wavelengths_tab, flux_tab, kind="linear")
+
+
+	def _add_telluric_correction(self, abba_fit, filter_type, **kwargs):
+
+		wave, flux = self.get_raw_spectrum(filter_type)
+		wave, flux = self._remove_hydrogen(flux, wave, filter_type)
+
+		telluric_correction = flux/abba_fit
+
+		return telluric_correction
+
+	def _remove_hydrogen(self, flux, wave, filter_type, widths=None):
+		
+		# hydrogen lines
+		paschen = [18750, 12820, 10940, 10050, 9546,]
+		bracket = [40510,26250,21660,19440,18170,14580,]
+		all_lines = sorted(paschen + bracket)
+
+		widths = widths if widths is not None else [10, 30, 20, 10, 10, 3, 7, 5, 10, 10, 10,]
+		if len(widths) != len(all_lines): raise ValueError('Widths length should be %i '%len(all_lines)+\
+															'(current length: %i)'%(len(widths)))
+		for l, w in zip(all_lines, widths):
+			idx = np.where(np.abs(wave-l)==min(np.abs(wave-l)))[0][0]
+			if idx != 0 and idx != len(wave)-1:
+				x_vals = [wave[idx-w], wave[idx+w]]
+				y_vals = [flux[idx-w], flux[idx+w]]
+				interp = interp1d(x_vals, y_vals, kind="linear")
+
+				x = wave[idx-w:idx+w]
+				flux[idx-w:idx+w] = interp(x)
 
 		return wave, flux
 
 	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
 		
-		wave, resp_curve = calibration_obs.get_response_curve(filter_type, kwargs.get("telluric_correction", False))
+		wave, resp_curve = calibration_obs.get_response_curve(filter_type)
 		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
 
 		return wave, raw_data*resp_curve

@@ -3,4 +3,5 @@ python test_file_system.py
 python test_rect_and_cal.py
 python test_ABBA.py
 python test_flux_calibration.py
+python test_resp_curve.py
 

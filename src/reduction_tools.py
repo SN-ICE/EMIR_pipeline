@@ -49,12 +49,31 @@ def smooth(y, radius=10):
     
     return np.array([np.nan]*(radius//2 + 1) + smoothed_data + [np.nan]*(radius//2))
 
+def fits_to_data(fname):
+    file = fits.open(fname)
+    try:
+        ydata = file[1].data
+        header = file[1].header
+        file.close()
+    except IndexError:
+        ydata = file[0].data
+        header = file[0].header
+        file.close()
+
+    return pixels_to_wavelength(header), ydata
+
 def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
     
     ABBA_file = fits.open(ABBA_fname)
-    ABBA = ABBA_file[1].data
-    ABBA_header = ABBA_file[1].header
-    ABBA_file.close()
+    try:
+    	ABBA = ABBA_file[1].data
+    	ABBA_header = ABBA_file[1].header
+    	ABBA_file.close()
+    except IndexError:
+        ABBA = ABBA_file[0].data
+        ABBA_header = ABBA_file[0].header
+        ABBA_file.close()
+
 
     if SN_position is None:
         max_i, min_i = get_extrema_row(ABBA)
