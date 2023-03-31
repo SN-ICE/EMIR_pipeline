@@ -56,6 +56,18 @@ class Observation(object):
 		if not os.path.exists(os.path.join(self.result_dir, "EMIR_directory")):
 			self._build_EMIR_directory()
 
+	def _clean_emir_directory(self):
+		for f in os.listdir(os.path.join(self.emir_path, "data/")):
+			if f[0].isalpha(): continue
+			os.remove(os.path.join(self.emir_path, "data/", f))
+
+	def _clean_files(self):
+		try:
+			shutil.rmtree(self.emir_path)
+			shutil.rmtree(self.result_dir)
+		except FileNotFoundError:
+			pass
+
 	def _get_result_dir(self, result_dir):
 		'''
 		Finds the results directory and creates it if it doesn't yet exist.
@@ -223,13 +235,6 @@ class Observation(object):
 
 			f.close()
 
-	def run_analysis(self, filter_type):
-	
-		self.rectify_and_calibrate(filter_type)
-		self.ABBA_subtract(filter_type)
-		self.convert_flux(filter_type)
-		# save final results
-
 	def rectify_and_analyze(self, analysis_type, filter_type):
 		'''
 		Run the numina recipe for rectification and calibration.
@@ -330,7 +335,7 @@ class Observation(object):
 		primary_hdu = fits.ImageHDU(data=final_image, header=header)
 		primary_hdu.writeto(fname, overwrite=True)
 
-	###### RESPONSE CURVE #############
+	###### RESPONSE CURVE FUNCTIONS #############
 
 	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
 		'''Makes a response curve of the data.'''
@@ -347,12 +352,6 @@ class Observation(object):
 	def get_response_curve(self, filter_type):
 		
 		fname = self.response_curve_dir+'/%s_response_curve.fits'%filter_type
-
-		#with fits.open(fname) as f:
-		#	header = f[0].header
-		#	flux = f[0].data
-		#	wave = pixels_to_wavelength(header)
-
 		wave, flux = fits_to_data(fname)
 
 		return wave, flux
@@ -365,10 +364,8 @@ class Observation(object):
 		
 		response = tabulated_flux / counts
 
-		if kwargs.get('correct_telluric_lines', True):
-			telluric_corr = self._add_telluric_correction(counts, filter_type, **kwargs)
-			response = response / telluric_corr
-
+		telluric_corr = self._add_telluric_correction(counts, filter_type, **kwargs)
+		response = response / telluric_corr
 
 		if 'prelim_smooth_radius' in kwargs:
 			response = smooth(response, radius=kwargs['prelim_smooth_radius']) 
@@ -467,6 +464,8 @@ class Observation(object):
 
 		return wave, flux
 
+	##### FINAL REDUCTION FUNCTIONS #######
+
 	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
 		
 		wave, resp_curve = calibration_obs.get_response_curve(filter_type)
@@ -478,18 +477,4 @@ class Observation(object):
 		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 
 											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
 		return wave, raw_data
-
-	def _clean_emir_directory(self):
-		for f in os.listdir(os.path.join(self.emir_path, "data/")):
-			if f[0].isalpha(): continue
-			os.remove(os.path.join(self.emir_path, "data/", f))
-
-	def _clean_files(self):
-		try:
-			shutil.rmtree(self.emir_path)
-			shutil.rmtree(self.result_dir)
-		except FileNotFoundError:
-			pass
-	
-
 
