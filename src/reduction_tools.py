@@ -117,5 +117,35 @@ def get_atmospheric_spectrum(wavelengths):
     atmos_interpolation = interp1d(telluric_wave, telluric_flux, kind="linear")
     return atmos_interpolation(wavelengths)
 
+def get_header(o, idx):
+	
+    f = [f for f in os.listdir(o.abba_dir) if f[0] !='.'][0]
+    fname = o.abba_dir + '/' + f
+    with fits.open(fname) as f:
+        h = f[idx].header
+
+    return h
+
+def get_hydrogen_lines(widths=None):
+    paschen = [18750, 12820, 10940, 10050, 9546,]
+    bracket = [40510,26250,21660,19440,18170,14580,]
+    etc = [15550, 15730, 15900, 16100, 16400, 16800, 17350,
+		   20000, 20100, 20500, 20700, 20950, 21050, 21150]
+    all_lines = sorted(paschen + bracket + etc)
+    all_lines[15] = 0 ; all_lines[16] = 0
+
+    all_lines[2] -= 30
+    all_lines[6] -= 10
+    all_lines[7] -= 15
+    all_lines[8] += 20
+    all_lines[9] += 20
+    all_lines[10] += 20
+    all_lines[11] += 15
+
+    widths = widths if widths is not None else [9, 15, 15, 10, 3, 8, 9,
+            									7, 7, 7, 5, 5, 7, 1, 
+            									1, 9, 4, 4, 3, 3, 3,
+            									3, 7, 1, 3]
 
 
+    return all_lines, widths

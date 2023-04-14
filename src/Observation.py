@@ -159,12 +159,13 @@ class Observation(object):
 		for fil in self.flat_files:
 			for i, f in enumerate(self.flat_files[fil]):
 				fi = fits.open(file_base+f)
-				im = fi[1].data
+				im = fi[-1].data
 				if i == 0:
 					ff_coadd = im
 				else:
 					ff_coadd += im
 				fi.close()
+
 			emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
 			default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
 			default_fits.data = ff_coadd
@@ -442,14 +443,9 @@ class Observation(object):
 
 		return telluric_correction
 
-	def _remove_hydrogen(self, flux, wave, filter_type, widths=None):
-		
-		# hydrogen lines
-		paschen = [18750, 12820, 10940, 10050, 9546,]
-		bracket = [40510,26250,21660,19440,18170,14580,]
-		all_lines = sorted(paschen + bracket)
-
-		widths = widths if widths is not None else [10, 30, 20, 10, 10, 3, 7, 5, 10, 10, 10,]
+	def _remove_hydrogen(self, flux, wave, filter_type, widths=None, in_angstrom=False):
+	
+		all_lines, widths = get_hydrogen_lines(widths)
 		if len(widths) != len(all_lines): raise ValueError('Widths length should be %i '%len(all_lines)+\
 															'(current length: %i)'%(len(widths)))
 		for l, w in zip(all_lines, widths):
