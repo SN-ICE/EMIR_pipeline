@@ -15,7 +15,7 @@ FLAT_FIELD_FILENAME = 'master_flat_%s.fits'
 
 class Observation(object):
 
-	def __init__(self, observation_dir, result_dir=None, conda_check=True):
+	def __init__(self, observation_dir, result_dir=None, conda_check=True, qc_fname=None):
 
 		'''
 		Constructor for Observation object. 
@@ -45,7 +45,7 @@ class Observation(object):
 		self.obs_dir = observation_dir
 		self.result_dir = self._get_result_dir(result_dir)
 
-		self.qc = self._get_quality_control_info()
+		self.qc = self._get_quality_control_info(qc_fname)
 		self.object_files, self.arc_files, self.flat_files = self._get_files()
 		
 		self.must_generate_flat_field = (len(self.flat_files) != 0 )
@@ -83,15 +83,16 @@ class Observation(object):
 
 		return result_dir
 
-	def _get_quality_control_info(self):
+	def _get_quality_control_info(self, qc_filename=None):
 		'''
 		Finds and parses the quality control file. 
 		'''		
 
-		for f in os.listdir(self.obs_dir):
-			if f[-4:] == ".txt" and f[:3] == "GTC":
-				qc_filename = os.path.join(self.obs_dir,f)
-				break
+		if qc_filename is None:
+			for f in os.listdir(self.obs_dir):
+				if f[-4:] == ".txt" and f[:3] == "GTC":
+					qc_filename = os.path.join(self.obs_dir,f)
+					break
 		try:	
 			return Quality_Control(qc_filename)
 		except UnboundLocalError:
@@ -462,12 +463,50 @@ class Observation(object):
 
 	##### FINAL REDUCTION FUNCTIONS #######
 
-	def get_reduced_spectrum(self, calibration_obs, filter_type, **kwargs):
+	def get_reduced_spectrum(self, tabulated_magnitude, calibration_obs, filter_type, **kwargs):
 		
 		wave, resp_curve = calibration_obs.get_response_curve(filter_type)
 		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
+		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, filter_type)
 
-		return wave, raw_data*resp_curve
+		return wave, flux_scaling*raw_data*resp_curve
+
+	def _calculate_flux_scaling(self, tabulated_magnitude, wave, filter_type):
+		resp_wave, resp_flux = self._get_filter_response_values(wave, filter_type)
+		return self._flux_scale(tabulated_magnitude, resp_flux)
+		
+	def _get_filter_response_values(self, wave, filter_type):	
+		wave_overlap = {} ; flux = {} 
+		fresp_dir = os.getenv('EMIR_PIPE') + '/filter_response_functions/'
+		for fname in os.listdir(fresp_dir):
+			if fname[0] not in filter_type: continue
+			fr_wave = [] ; fr_flux = []
+			with open(fresp_dir+fname, 'r') as f:
+				for line in f:
+					if not line[0].isdigit(): continue
+					w,f = line.split()
+					fr_wave += [float(w)*10**4]
+					fr_flux += [float(f)]
+				fr_wave += [0]
+				fr_flux += [0]
+    
+			# interpolate response to fit reduced spectrum
+			wo = [wl if wl<fr_wave[0] and wl>fr_wave[-1] else 0 for wl in wave]
+			interp = interp1d(fr_wave, fr_flux, kind="linear")
+			
+			wave_overlap[fname[0]] = wo
+			flux[fname[0]] = interp(wo)
+
+		return wave_overlap, flux
+
+	def _flux_scale(self, tabulated_mag, flux):
+		zpdiffs = []
+		for key in flux:
+			area = np.sum(flux[key])
+			zpdiffs += [tabulated_mag[key] - 2.5*np.log10(area)-48.6]
+
+		zpdiffs = np.array(zpdiffs)
+		return np.average(10**(0.4*zpdiffs))
 
 	def get_raw_spectrum(self, filter_type, **kwargs):
 		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 
