@@ -9,9 +9,12 @@ from astropy.io import fits
 from EMIR_file_processing import *
 from templates import *
 from reduction_tools import *
+from interactive_reduction_tools import *
 
 DEFAULT_FLAT_FIELD_FILE = 'master_flat_spec.fits'
 FLAT_FIELD_FILENAME = 'master_flat_%s.fits'
+
+zp_fluxes_vega = {'J': 3.129e-10, 'H': 1.133e-10, 'K': 4.283e-11}
 
 class Observation(object):
 
@@ -484,47 +487,51 @@ class Observation(object):
 	def get_reduced_spectrum(self, tabulated_magnitude, calibration_obs, filter_type, **kwargs):
 		
 		wave, resp_curve = calibration_obs.get_response_curve(filter_type)
+		wave, raw_calib_data = calibration_obs.get_raw_spectrum(filter_type, **get_parameters(calibration_obs, filter_type))
 		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
-		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, filter_type)
+		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, raw_calib_data*resp_curve, filter_type, **kwargs)
 
 		return wave, flux_scaling*raw_data*resp_curve
 
-	def _calculate_flux_scaling(self, tabulated_magnitude, wave, filter_type):
-		resp_wave, resp_flux = self._get_filter_response_values(wave, filter_type)
-		return self._flux_scale(tabulated_magnitude, resp_flux)
+	def _calculate_flux_scaling(self, tabulated_magnitude, wave, SN_data, filter_type, **kwargs):
+
+		overlap_mask, resp_flux = self._get_filter_response_values(wave, filter_type)
+		return self._flux_scale(SN_data[overlap_mask], tabulated_magnitude, resp_flux, wave[overlap_mask], filter_type)
 		
 	def _get_filter_response_values(self, wave, filter_type):	
 		wave_overlap = {} ; flux = {} 
 		fresp_dir = os.getenv('EMIR_PIPE') + '/filter_response_functions/'
-		for fname in os.listdir(fresp_dir):
-			if fname[0] not in filter_type: continue
+		for fil in list(filter_type):
+			if fil == 'Y': continue
+			fname = fil+'.txt'
 			fr_wave = [] ; fr_flux = []
 			with open(fresp_dir+fname, 'r') as f:
 				for line in f:
 					if not line[0].isdigit(): continue
 					w,f = line.split()
-					fr_wave += [float(w)*10**4]
+					fr_wave += [float(w)*10000]
 					fr_flux += [float(f)]
-				fr_wave += [0]
-				fr_flux += [0]
     
-			# interpolate response to fit reduced spectrum
-			wo = [wl if wl<fr_wave[0] and wl>fr_wave[-1] else 0 for wl in wave]
 			interp = interp1d(fr_wave, fr_flux, kind="linear")
-			
-			wave_overlap[fname[0]] = wo
-			flux[fname[0]] = interp(wo)
+			data_overlap = (wave>min(fr_wave)) & (wave<max(fr_wave))
 
-		return wave_overlap, flux
+			flux[fil] = interp(wave[data_overlap])
 
-	def _flux_scale(self, tabulated_mag, flux):
-		zpdiffs = []
-		for key in flux:
-			area = np.sum(flux[key])
-			zpdiffs += [tabulated_mag[key] - 2.5*np.log10(area)-48.6]
+		return data_overlap, flux
 
-		zpdiffs = np.array(zpdiffs)
-		return np.average(10**(0.4*zpdiffs))
+	def _flux_scale(self, data, tabulated_mag, flux, wave, filter_type):
+
+		f = filter_type[-1] # either J or K
+
+		area_f = np.sum(flux[f])*(wave[1]-wave[0]) # total area of the filter
+		area_c = np.sum(data*flux[f])*(wave[1]-wave[0]) # data convolved with filter
+
+		m_zp = (2.5*np.log10(np.abs(area_c/area_f)) 
+				- 2.5*np.log10(zp_fluxes_vega[f]) 
+				+ tabulated_mag[f] )
+		f_zp = 10**(-m_zp/2.5) 
+
+		return f_zp
 
 	def get_raw_spectrum(self, filter_type, **kwargs):
 		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 

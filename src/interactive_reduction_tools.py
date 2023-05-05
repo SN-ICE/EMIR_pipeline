@@ -11,7 +11,6 @@ import numpy as np
 import os
 import pickle
 
-from Observation import Observation
 from reduction_tools import *
 
 def get_parameters(o, filter_type):
@@ -27,6 +26,20 @@ def get_parameters(o, filter_type):
 			kwa['sample_points'] = d['sample_points'][filter_type]
 	
 	return kwa
+
+def get_parameters(o, filter_type):
+
+    if not os.path.exists(o.result_dir+"/interactive_parameters.pkl"): return {}
+
+    kwa = {}
+    with open(o.result_dir+"/interactive_parameters.pkl", 'rb') as f:
+        d = pickle.load(f)
+        if 'SN_positions' in d and filter_type in d['SN_positions']:
+            kwa['SN_position'] = d['SN_positions'][filter_type]
+        if 'sample_points' in d and filter_type in d['sample_points']:
+            kwa['sample_points'] = d['sample_points'][filter_type]
+
+    return kwa
 
 def interactive_SN_position_finder(o, filter_type):
 
