@@ -56,7 +56,7 @@ def interactive_SN_position_finder(o, filter_type):
 
 	# create interactive controls
 	def f(x, low, high):
-		kwargs = {'SN_position': (high, low)}
+		kwargs = {'SN_position': (low, high)}
 		w, raw = o.get_raw_spectrum(filter_type, **kwargs)
 		return raw
 
@@ -80,7 +80,7 @@ def interactive_SN_position_finder(o, filter_type):
 			d = {}
 
 		if d.get('SN_positions') is None: d['SN_positions'] = {}
-		d['SN_positions'][filter_type] = (ctrls.params['high'], ctrls.params['low'])
+		d['SN_positions'][filter_type] = (ctrls.params['low'], ctrls.params['high'])
 
 		with open(fname, 'wb') as f:
 			pickle.dump(d, f)
