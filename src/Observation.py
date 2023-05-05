@@ -188,16 +188,20 @@ class Observation(object):
 			file_dict = getattr(self, "%s_files"%analysis_type)
 			data_file_list = file_dict[filter_type]
 			data_path = os.path.join(self.obs_dir, analysis_type)
+			if not os.path.exists(os.path.join(self.obs_dir, analysis_type)):
+				raise ValueError("'%s' is not a valid analysis type (options: 'object', 'arc', 'flat')"%(analysis_type))
+
 			for fname in data_file_list:
+				if not os.path.exists(os.path.join(self.obs_dir, analysis_type, fname)):
+					print('WARNING: Qualty control file lists a file that does not exist (%s)'%fname)
+					continue
 				source_path = os.path.join(data_path, fname)
 				target_path = os.path.join(self.emir_path, "data", fname)
 				shutil.copyfile(source_path, target_path)
 
-		except FileNotFoundError:
-			raise ValueError("%s is not a valid analysis type (options: 'object', 'arc', 'flat')"%(analysis_type))
 		except KeyError:
-			raise KeyError("%s is not a valid filter type (options: %s)"\
-							%(filter_type, str(list(file_dict.keys()))))
+			raise KeyError("%s is not a valid filter type for %s analysis (options: %s)"\
+							%(filter_type, analysis_type, str(list(file_dict.keys()))))
 
 
 	def _generate_control_file(self, fil):
@@ -218,6 +222,11 @@ class Observation(object):
 		with open(os.path.join(self.emir_path, '%s_obs_res_%s.yaml'%(analysis_type,filter_type)), 'w') as f:
 			try:
 				for i, filename in enumerate(getattr(self, "%s_files"%analysis_type)[filter_type]):
+					fpath = os.path.join(self.obs_dir, analysis_type, filename)
+					if not os.path.exists(fpath): 
+						print("WARNING: skipping file %s"%filename)
+						continue
+
 					if analysis_type == 'arc':
 						file_list += " - %s\n"%filename
 					else:
@@ -294,19 +303,28 @@ class Observation(object):
 
 			fID = row['IMAGE'].split('-')[0]
 			fname = fname_base%(self.name, fID)
-			if not os.path.exists(fname): continue
+			if not os.path.exists(os.path.join(self.emir_path,'obsid%s_%s_results/'))\
+			  and not os.path.exists(fname) \
+			  and os.path.exists(os.path.join(self.obs_dir, 'object', row['IMAGE'])):
+				print(os.path.join(self.obs_dir, 'object', row['IMAGE']))
+				raise ValueError('EMIR did not run correctly, look at log file.')
+			elif not os.path.exists(fname): continue
 
 			if row['TELPOS'] == 'NOD_A':
 				fi = fits.open(fname)
 				A += [fi[0].data.astype(float)]
-			else:
+			elif row['TELPOS'] == 'NOD_B':
 				fi = fits.open(fname)
 				header = fi[0].header
 				B += [fi[0].data.astype(float)]
+			else:
+				raise ValueError("TELPOS should be NOD_A or NOD_B not %s (observation %s)"%(row['TELPOS'],self.name))
 			fi.close()
 
 		if len(A) == 0 or len(B) == 0:
-			raise ValueError("quality control file has incorrect names (observation %s)"%self.name)
+			err_msg = "%i files in A position, %i in B, %i files in total (observation %s)"%(len(A), len(B), len(self.qc.object_table), self.name)
+			err_msg2 = "\n if you're getting this message, the quality control file might have the wrong file names"
+			raise ValueError(err_msg+err_msg2)
 
 		return A, B, header
 
