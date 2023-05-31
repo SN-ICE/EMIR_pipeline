@@ -360,9 +360,11 @@ class Observation(object):
 
 	###### RESPONSE CURVE FUNCTIONS #############
 
-	def make_response_curve(self, tabulated_spectrum_path, filter_type, **kwargs):
+	def make_response_curve(self, filter_type, **kwargs):
 		'''Makes a response curve of the data.'''
 
+		tabulated_spectrum_path = os.path.join(os.environ['EMIR_PIPE'],
+												"extra_files/uka0v.fits")
 		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
 
 		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
@@ -370,7 +372,7 @@ class Observation(object):
 											kwargs.get('SN_position', None),
 											kwargs.get('raw_debug', False))
 
-		self._make_prelim_resp_curve(tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs)
+		self._make_prelim_resp_curve(counts, wave, header, filter_type, **kwargs)
 		
 	def get_response_curve(self, filter_type):
 		
@@ -380,10 +382,12 @@ class Observation(object):
 		return wave, flux
 
 
-	def _make_prelim_resp_curve(self, tabulated_spectrum_path, counts, wave, header, filter_type, **kwargs):
+	def _make_prelim_resp_curve(self, counts, wave, header, filter_type, **kwargs):
 
+		tabulated_spectrum_path = os.path.join(os.environ['EMIR_PIPE'],
+                                                "extra_files/uka0v.fits")
 		counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
-		tabulated_flux = self._get_tablulated_flux(tabulated_spectrum_path, wave, **kwargs)
+		tabulated_flux = self._get_tablulated_flux(wave, **kwargs)
 		
 		response = tabulated_flux / counts
 
@@ -421,7 +425,10 @@ class Observation(object):
 
 		return counts
 
-	def _get_tablulated_flux(self, tabulated_spectrum_path, wave, **kwargs):
+	def _get_tablulated_flux(self, wave, **kwargs):
+		
+		tabulated_spectrum_path = os.path.join(os.environ['EMIR_PIPE'],
+                                                "extra_files/uka0v.fits")
 		tabulated_interpolation = self._get_tabulated_interpolation(tabulated_spectrum_path)
 		tabulated_flux = tabulated_interpolation(wave)
 

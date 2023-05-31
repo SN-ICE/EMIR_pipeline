@@ -78,9 +78,9 @@ def interactive_SN_position_finder(o, filter_type):
 	plt.subplots_adjust(bottom=0.3, top=0.95)
 
 	high_ax = plt.axes([0.45, 0.15, 0.4, 0.03])
-	high_slider = Slider(high_ax, label="A (positive peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1])[0])
+	high_slider = Slider(high_ax, label="A (positive peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1,1])[1])
 	low_ax = plt.axes([0.45, 0.10, 0.4, 0.03])
-	low_slider = Slider(low_ax, label="B (negative peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1,1])[1])
+	low_slider = Slider(low_ax, label="B (negative peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1,1])[0])
 
 	ax = plt.axes([0.01, 0.01, 0.1, 0.075])
 	button = Button(ax, 'Finalize',color="yellow")
@@ -110,8 +110,11 @@ def interactive_SN_position_finder(o, filter_type):
 	plt.show()
 	return button, ctrls.params	
 
-def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, num_points=7, **kwargs):
+def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs):
 
+	tabulated_flux_path = os.path.join(os.environ['EMIR_PIPE'],
+                                           "extra_files/uka0v.fits")
+	
 	with fits.open(tabulated_flux_path) as f:
 		tab_data = f[0].data
 		header = f[0].header
@@ -135,7 +138,7 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 	plot_raw_data(wave, raw, tab_interp, ax)
 
 	pts, tab_pts, resp_pts = plot_sample_points(init_points, interp, tab_interp, ax)
-	line, tab_line, resp_line = plot_spline_fits(wave, o_calib, tabulated_flux_path, filter_type, 
+	line, tab_line, resp_line = plot_spline_fits(wave, o_calib, filter_type, 
 												 init_points, interp, tab_interp, ax, **(kwargs|kwa))
 	[a.legend() for a in ax[:3]]
 
@@ -147,7 +150,7 @@ def interactive_response_curve_fit(o_calib, filter_type, tabulated_flux_path, nu
 		flux, counts = update_splines(x, wave, interp, tab_interp, line, tab_line)
 
 		kw = kwargs | {'sample_points': x}
-		o_calib.make_response_curve(tabulated_flux_path, filter_type, **kw)
+		o_calib.make_response_curve(filter_type, **kw)
 		resp_wave, response = o_calib.get_response_curve(filter_type)
 		resp_line.set_xdata(resp_wave)
 		resp_line.set_ydata(response)
@@ -213,14 +216,14 @@ def update_sample_points(x, interp, tab_interp, pts, tab_pts, resp_pts):
 	tab_pts.set_ydata(tab_interp(x))
 	resp_pts.set_ydata(tab_interp(x)/interp(x))
 
-def plot_spline_fits(wave, o_calib, tabulated_flux_path, filter_type, init_points, dat_interp, tab_interp, ax, **kwargs):
+def plot_spline_fits(wave, o_calib, filter_type, init_points, dat_interp, tab_interp, ax, **kwargs):
 	
 	tck = splrep(init_points, dat_interp(init_points))
 	counts = splev(wave, tck)
 	tck = splrep(init_points, tab_interp(init_points))
 	flux = splev(wave, tck)
 	
-	o_calib.make_response_curve(tabulated_flux_path, filter_type, **kwargs)
+	o_calib.make_response_curve(filter_type, **kwargs)
 	resp_wave, response = o_calib.get_response_curve(filter_type)
 
 	line, = ax[0].plot(wave, counts, color=plt.cm.Set1(0), label='spline fit')
