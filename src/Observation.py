@@ -55,7 +55,7 @@ class Observation(object):
 
 		self.emir_path = os.path.join(self.result_dir, 'EMIR_files')
 		self.abba_dir = os.path.join(self.result_dir, "ABBA")
-		self.response_curve_dir = os.path.join(self.result_dir, "response_curve")
+		self.sens_function_dir = os.path.join(self.result_dir, "sens_function")
 		if not os.path.exists(os.path.join(self.result_dir, "EMIR_directory")):
 			self._build_EMIR_directory()
 
@@ -104,7 +104,7 @@ class Observation(object):
 
 	def _get_files(self):
 		'''
-		Gets a tuple of the file names for each obervation type and filter. 
+		Gets a tuple of the file names for each obervation type and grism. 
 		Checks that there are enough files for analysis.
 		'''
 
@@ -177,19 +177,19 @@ class Observation(object):
 			default_fits.close()
 
 
-	def initialize(self, analysis_type, filter_type):
+	def initialize(self, analysis_type, grism_type):
 		'''
 		Prepares the emir directory to run the analysis type.
 		'''
 
-		self._copy_files(analysis_type, filter_type)
-		self._generate_control_file(filter_type)
-		self._generate_obs_res(analysis_type, filter_type)
+		self._copy_files(analysis_type, grism_type)
+		self._generate_control_file(grism_type)
+		self._generate_obs_res(analysis_type, grism_type)
 
-	def _copy_files(self, analysis_type, filter_type):
+	def _copy_files(self, analysis_type, grism_type):
 		try:
 			file_dict = getattr(self, "%s_files"%analysis_type)
-			data_file_list = file_dict[filter_type]
+			data_file_list = file_dict[grism_type]
 			data_path = os.path.join(self.obs_dir, analysis_type)
 			if not os.path.exists(os.path.join(self.obs_dir, analysis_type)):
 				raise ValueError("'%s' is not a valid analysis type (options: 'object', 'arc', 'flat')"%(analysis_type))
@@ -203,8 +203,8 @@ class Observation(object):
 				shutil.copyfile(source_path, target_path)
 
 		except KeyError:
-			raise KeyError("%s is not a valid filter type for %s analysis (options: %s)"\
-							%(filter_type, analysis_type, str(list(file_dict.keys()))))
+			raise KeyError("%s is not a valid grism type for %s analysis (options: %s)"\
+							%(grism_type, analysis_type, str(list(file_dict.keys()))))
 
 
 	def _generate_control_file(self, fil):
@@ -217,14 +217,14 @@ class Observation(object):
 			f.write(CONTROL_YAML_TEMPLATE%(flat_fname,flat_fname))
 			f.close()
 
-	def _generate_obs_res(self, analysis_type, filter_type):
+	def _generate_obs_res(self, analysis_type, grism_type):
 		'''
 		Generates all observation result files for all GRISMs and analysis types.
 		'''
 		file_list = '' 
-		with open(os.path.join(self.emir_path, '%s_obs_res_%s.yaml'%(analysis_type,filter_type)), 'w') as f:
+		with open(os.path.join(self.emir_path, '%s_obs_res_%s.yaml'%(analysis_type,grism_type)), 'w') as f:
 			try:
-				for i, filename in enumerate(getattr(self, "%s_files"%analysis_type)[filter_type]):
+				for i, filename in enumerate(getattr(self, "%s_files"%analysis_type)[grism_type]):
 					fpath = os.path.join(self.obs_dir, analysis_type, filename)
 					if not os.path.exists(fpath): 
 						print("WARNING: skipping file %s"%filename)
@@ -236,7 +236,7 @@ class Observation(object):
 						file_list = " - %s\n"%filename
 						text = OBS_RES_TEMPLATE%(self.name+"_"+filename.split('-')[0], file_list)
 						f.write(text)
-						if i < len(getattr(self, "%s_files"%analysis_type)[filter_type])-1:
+						if i < len(getattr(self, "%s_files"%analysis_type)[grism_type])-1:
 							f.write('---\n')
 				
 				if analysis_type == 'arc':
@@ -249,7 +249,7 @@ class Observation(object):
 
 			f.close()
 
-	def rectify_and_analyze(self, analysis_type, filter_type):
+	def rectify_and_analyze(self, analysis_type, grism_type):
 		'''
 		Run the numina recipe for rectification and calibration.
 		'''
@@ -258,7 +258,7 @@ class Observation(object):
 		os.chdir(self.emir_path)
 
 		result = subprocess.run('numina run %s_obs_res_%s.yaml -r control_%s.yaml'\
-								%(analysis_type,filter_type,filter_type),
+								%(analysis_type,grism_type,grism_type),
 							shell=True, capture_output=True, text=True)
 
 		with open("emir_out.txt", 'w') as f:
@@ -268,18 +268,18 @@ class Observation(object):
 
 		os.chdir(orig_cwd)
 
-	def ABBA_subtract(self, filter_type):
+	def ABBA_subtract(self, grism_type):
 
-		self._prepare_ABBA(filter_type)
-		self._subtract_and_save_ABBA(filter_type)
+		self._prepare_ABBA(grism_type)
+		self._subtract_and_save_ABBA(grism_type)
 
-	def _prepare_ABBA(self, filter_type):
+	def _prepare_ABBA(self, grism_type):
 		'''
 		Prepares the directory to save ABBA information, checks that 
 		there is rectified and calibrated data.
 		'''
 		# if observation result file not generated, must run initialization
-		obs_res_file = os.path.join(self.emir_path, "object_obs_res_%s.yaml"%filter_type)
+		obs_res_file = os.path.join(self.emir_path, "object_obs_res_%s.yaml"%grism_type)
 		if not os.path.exists(obs_res_file):
 			raise FileNotFoundError("Must generate object result file from _initialize")
 		# if 'obsid%s_%s_results/reduced_mos.fits' not generated, must run rectification and calibration
@@ -296,13 +296,13 @@ class Observation(object):
 			os.mkdir(self.abba_dir)
 
 
-	def _get_calibrated_data(self, filter_type): 
+	def _get_calibrated_data(self, grism_type): 
 		
 		A = [] ; B = []
 		fname_base = os.path.join(self.emir_path,'obsid%s_%s_results/reduced_mos.fits')
 
 		for row in self.qc.object_table:
-			if row['FILTER'] != filter_type: continue
+			if row['FILTER'] != grism_type: continue
 
 			fID = row['IMAGE'].split('-')[0]
 			fname = fname_base%(self.name, fID)
@@ -331,25 +331,25 @@ class Observation(object):
 
 		return A, B, header
 
-	def _subtract_and_save_ABBA(self, filter_type, only_AB=False):
+	def _subtract_and_save_ABBA(self, grism_type, only_AB=False):
 		'''
 		Performs the actual subtraction and saves the results.
 		'''
-		A, B, header = self._get_calibrated_data(filter_type)
+		A, B, header = self._get_calibrated_data(grism_type)
 
 		if len(A) != 2 and len(B) != 2:
-			self._subtract_and_save_non_ABBA(filter_type)
+			self._subtract_and_save_non_ABBA(grism_type)
 
-		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
+		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%grism_type)
 
 		primary_hdu = fits.ImageHDU(data=A[0] + A[1] - B[0] - B[1], header=header)
 		primary_hdu.writeto(fname, overwrite=True)
 
 
-	def _subtract_and_save_non_ABBA(self, filter_type):
+	def _subtract_and_save_non_ABBA(self, grism_type):
 
-		A, B, header = self._get_calibrated_data(filter_type)
-		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%filter_type)
+		A, B, header = self._get_calibrated_data(grism_type)
+		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%grism_type)
 		
 		final_image = np.zeros(A[0].shape)
 		for a,b in zip(A,B):
@@ -360,49 +360,49 @@ class Observation(object):
 
 	###### RESPONSE CURVE FUNCTIONS #############
 
-	def make_response_curve(self, filter_type, **kwargs):
-		'''Makes a response curve of the data.'''
+	def make_sens_function(self, grism_type, **kwargs):
+		'''Makes a sensitivity curve for the CCD.'''
 
 		tabulated_spectrum_path = os.path.join(os.environ['EMIR_PIPE'],
 												"extra_files/uka0v.fits")
-		if not os.path.exists(self.response_curve_dir): os.mkdir(self.response_curve_dir)
+		if not os.path.exists(self.sens_function_dir): os.mkdir(self.sens_function_dir)
 
-		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%filter_type)
-		counts, wave, header = get_spectrum(ABBA_file, filter_type, 
+		ABBA_file = os.path.join(self.abba_dir,'ABBA_subtracted_%s.fits'%grism_type)
+		counts, wave, header = get_spectrum(ABBA_file, grism_type, 
 											kwargs.get('SN_position', None),
 											kwargs.get('raw_debug', False))
 
-		self._make_prelim_resp_curve(counts, wave, header, filter_type, **kwargs)
+		self._make_prelim_sens_fn(counts, wave, header, grism_type, **kwargs)
 		
-	def get_response_curve(self, filter_type):
+	def get_sens_function(self, grism_type):
 		
-		fname = self.response_curve_dir+'/%s_response_curve.fits'%filter_type
+		fname = self.sens_function_dir+'/%s_sens_function.fits'%grism_type
 		wave, flux = fits_to_data(fname)
 
 		return wave, flux
 
 
-	def _make_prelim_resp_curve(self, counts, wave, header, filter_type, **kwargs):
+	def _make_prelim_sens_fn(self, counts, wave, header, grism_type, **kwargs):
 
 		tabulated_spectrum_path = os.path.join(os.environ['EMIR_PIPE'],
                                                 "extra_files/uka0v.fits")
-		counts = self._do_abba_fitting(counts, wave, filter_type, header, **kwargs)
+		counts = self._do_abba_fitting(counts, wave, grism_type, header, **kwargs)
 		tabulated_flux = self._get_tablulated_flux(wave, **kwargs)
 		
-		response = tabulated_flux / counts
+		sens = tabulated_flux / counts
 
-		telluric_corr = self._add_telluric_correction(counts, filter_type, **kwargs)
-		response = response / telluric_corr
+		telluric_corr = self._add_telluric_correction(counts, grism_type, **kwargs)
+		sens = sens / telluric_corr
 
 		if 'prelim_smooth_radius' in kwargs:
-			response = smooth(response, radius=kwargs['prelim_smooth_radius']) 
+			sens = smooth(sens, radius=kwargs['prelim_smooth_radius']) 
 
-		hdu_sp = fits.PrimaryHDU(data=response, header=header)
-		hdu_sp.writeto(self.response_curve_dir+'/%s_response_curve.fits'%filter_type, overwrite=True)
+		hdu_sp = fits.PrimaryHDU(data=sens, header=header)
+		hdu_sp.writeto(self.sens_function_dir+'/%s_sens_function.fits'%grism_type, overwrite=True)
 
-		return response
+		return sens
 
-	def _do_abba_fitting(self, counts, wave, filter_type, header, **kwargs):
+	def _do_abba_fitting(self, counts, wave, grism_type, header, **kwargs):
 
 		if 'sample_points' in kwargs:
 			sample = []
@@ -421,7 +421,7 @@ class Observation(object):
 		counts = splev(wave, tck)
 	
 		hdu_sp = fits.PrimaryHDU(data=counts, header=header)
-		hdu_sp.writeto(self.response_curve_dir+'/%s_splined_response.fits'%filter_type, overwrite=True)
+		hdu_sp.writeto(self.sens_function_dir+'/%s_splined_sens.fits'%grism_type, overwrite=True)
 
 		return counts
 
@@ -463,16 +463,16 @@ class Observation(object):
 		return interp1d(wavelengths_tab, flux_tab, kind="linear")
 
 
-	def _add_telluric_correction(self, abba_fit, filter_type, **kwargs):
+	def _add_telluric_correction(self, abba_fit, grism_type, **kwargs):
 
-		wave, flux = self.get_raw_spectrum(filter_type)
-		wave, flux = self._remove_hydrogen(flux, wave, filter_type)
+		wave, flux = self.get_raw_spectrum(grism_type)
+		wave, flux = self._remove_hydrogen(flux, wave, grism_type)
 
 		telluric_correction = flux/abba_fit
 
 		return telluric_correction
 
-	def _remove_hydrogen(self, flux, wave, filter_type, widths=None, in_angstrom=False):
+	def _remove_hydrogen(self, flux, wave, grism_type, widths=None, in_angstrom=False):
 	
 		all_lines, widths = get_hydrogen_lines(widths)
 		if len(widths) != len(all_lines): raise ValueError('Widths length should be %i '%len(all_lines)+\
@@ -491,24 +491,24 @@ class Observation(object):
 
 	##### FINAL REDUCTION FUNCTIONS #######
 
-	def get_reduced_spectrum(self, tabulated_magnitude, calibration_obs, filter_type, **kwargs):
+	def get_reduced_spectrum(self, tabulated_magnitude, calibration_obs, grism_type, **kwargs):
 		
-		wave, resp_curve = calibration_obs.get_response_curve(filter_type)
-		wave, raw_calib_data = calibration_obs.get_raw_spectrum(filter_type, **get_parameters(calibration_obs, filter_type))
-		wave, raw_data = self.get_raw_spectrum(filter_type, **kwargs)
-		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, raw_calib_data*resp_curve, filter_type, **kwargs)
+		wave, sens_fn = calibration_obs.get_sens_function(grism_type)
+		wave, raw_calib_data = calibration_obs.get_raw_spectrum(grism_type, **get_parameters(calibration_obs, grism_type))
+		wave, raw_data = self.get_raw_spectrum(grism_type, **kwargs)
+		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, raw_calib_data*sens_fn, grism_type, **kwargs)
 
-		return wave, flux_scaling*raw_data*resp_curve
+		return wave, flux_scaling*raw_data*sens_fn
 
-	def _calculate_flux_scaling(self, tabulated_magnitude, wave, SN_data, filter_type, **kwargs):
+	def _calculate_flux_scaling(self, tabulated_magnitude, wave, SN_data, grism_type, **kwargs):
 
-		overlap_mask, resp_flux = self._get_filter_response_values(wave, filter_type)
-		return self._flux_scale(SN_data[overlap_mask], tabulated_magnitude, resp_flux, wave[overlap_mask], filter_type)
+		overlap_mask, resp_flux = self._get_filter_response_values(wave, grism_type)
+		return self._flux_scale(SN_data[overlap_mask], tabulated_magnitude, resp_flux, wave[overlap_mask], grism_type)
 		
-	def _get_filter_response_values(self, wave, filter_type):	
+	def _get_filter_response_values(self, wave, grism_type):	
 		wave_overlap = {} ; flux = {} 
 		fresp_dir = os.getenv('EMIR_PIPE') + '/filter_response_functions/'
-		for fil in list(filter_type):
+		for fil in list(grism_type):
 			if fil == 'Y': continue
 			fname = fil+'.txt'
 			fr_wave = [] ; fr_flux = []
@@ -540,8 +540,8 @@ class Observation(object):
 
 		return f_zp
 
-	def get_raw_spectrum(self, filter_type, **kwargs):
-		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%filter_type, filter_type, 
+	def get_raw_spectrum(self, grism_type, **kwargs):
+		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%grism_type, grism_type, 
 											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
 		return wave, raw_data
 

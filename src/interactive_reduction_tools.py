@@ -13,40 +13,40 @@ import pickle
 
 from reduction_tools import *
 
-def get_parameters(o, filter_type):
+def get_parameters(o, GRISM):
 
 	if not os.path.exists(o.result_dir+"/interactive_parameters.pkl"): return {}
 	
 	kwa = {}
 	with open(o.result_dir+"/interactive_parameters.pkl", 'rb') as f:
 		d = pickle.load(f)
-		if 'SN_positions' in d and filter_type in d['SN_positions']:
-			kwa['SN_position'] = d['SN_positions'][filter_type]
-		if 'sample_points' in d and filter_type in d['sample_points']:
-			kwa['sample_points'] = d['sample_points'][filter_type]
+		if 'SN_positions' in d and GRISM in d['SN_positions']:
+			kwa['SN_position'] = d['SN_positions'][GRISM]
+		if 'sample_points' in d and GRISM in d['sample_points']:
+			kwa['sample_points'] = d['sample_points'][GRISM]
 	
 	return kwa
 
-def get_parameters(o, filter_type):
+def get_parameters(o, GRISM):
 
     if not os.path.exists(o.result_dir+"/interactive_parameters.pkl"): return {}
 
     kwa = {}
     with open(o.result_dir+"/interactive_parameters.pkl", 'rb') as f:
         d = pickle.load(f)
-        if 'SN_positions' in d and filter_type in d['SN_positions']:
-            kwa['SN_position'] = d['SN_positions'][filter_type]
-        if 'sample_points' in d and filter_type in d['sample_points']:
-            kwa['sample_points'] = d['sample_points'][filter_type]
+        if 'SN_positions' in d and GRISM in d['SN_positions']:
+            kwa['SN_position'] = d['SN_positions'][GRISM]
+        if 'sample_points' in d and GRISM in d['sample_points']:
+            kwa['sample_points'] = d['sample_points'][GRISM]
 
     return kwa
 
-def interactive_SN_position_finder(o, filter_type):
+def interactive_SN_position_finder(o, GRISM):
 
-	kwa = get_parameters(o, filter_type) 
-	raw_wave, raw = o.get_raw_spectrum(filter_type)
+	kwa = get_parameters(o, GRISM) 
+	raw_wave, raw = o.get_raw_spectrum(GRISM)
 
-	abba_fname = os.path.join(o.abba_dir, 'ABBA_subtracted_%s.fits'%filter_type)
+	abba_fname = os.path.join(o.abba_dir, 'ABBA_subtracted_%s.fits'%GRISM)
 	with fits.open(abba_fname) as f:
 		abba = f[1].data
 		abba_low = f[1].data[:,:300]
@@ -70,7 +70,7 @@ def interactive_SN_position_finder(o, filter_type):
 	# create interactive controls
 	def f(x, low, high):
 		kwargs = {'SN_position': (low, high)}
-		w, raw = o.get_raw_spectrum(filter_type, **kwargs)
+		w, raw = o.get_raw_spectrum(GRISM, **kwargs)
 		return raw
 
 	idx_range = range(low, high)
@@ -93,7 +93,7 @@ def interactive_SN_position_finder(o, filter_type):
 			d = {}
 
 		if d.get('SN_positions') is None: d['SN_positions'] = {}
-		d['SN_positions'][filter_type] = (ctrls.params['low'], ctrls.params['high'])
+		d['SN_positions'][GRISM] = (ctrls.params['low'], ctrls.params['high'])
 
 		with open(fname, 'wb') as f:
 			pickle.dump(d, f)
@@ -106,11 +106,11 @@ def interactive_SN_position_finder(o, filter_type):
 	iplt.axvline(ctrls["high"], ax=axs[1], c="k")
 	[a.legend(loc='upper right') for a in axs]
 
-	plt.suptitle(o.name+" "+filter_type)
+	plt.suptitle(o.name+" "+GRISM)
 	plt.show()
 	return button, ctrls.params	
 
-def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs):
+def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 
 	tabulated_flux_path = os.path.join(os.environ['EMIR_PIPE'],
                                            "extra_files/uka0v.fits")
@@ -120,9 +120,9 @@ def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs)
 		header = f[0].header
 		tab_wave = pixels_to_wavelength(header)
 
-	kwa = get_parameters(o_calib, filter_type)
+	kwa = get_parameters(o_calib, GRISM)
 
-	wave, raw = o_calib.get_raw_spectrum(filter_type, **(kwargs|kwa))
+	wave, raw = o_calib.get_raw_spectrum(GRISM, **(kwargs|kwa))
 	
 	interp = interp1d(wave, raw, kind="linear")
 	tab_interp = interp1d(tab_wave, tab_data, kind="linear")
@@ -137,8 +137,8 @@ def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs)
 	cl_b, res_b, sliders = init_widgets(wave, init_points, ax[3:])
 	plot_raw_data(wave, raw, tab_interp, ax)
 
-	pts, tab_pts, resp_pts = plot_sample_points(init_points, interp, tab_interp, ax)
-	line, tab_line, resp_line = plot_spline_fits(wave, o_calib, filter_type, 
+	pts, tab_pts, sens_pts = plot_sample_points(init_points, interp, tab_interp, ax)
+	line, tab_line, sens_line = plot_spline_fits(wave, o_calib, GRISM, 
 												 init_points, interp, tab_interp, ax, **(kwargs|kwa))
 	[a.legend() for a in ax[:3]]
 
@@ -146,14 +146,14 @@ def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs)
 		global x
 		x = sorted([sliders[key].val for key in sliders])
 		
-		update_sample_points(x, interp, tab_interp, pts, tab_pts, resp_pts)
+		update_sample_points(x, interp, tab_interp, pts, tab_pts, sens_pts)
 		flux, counts = update_splines(x, wave, interp, tab_interp, line, tab_line)
 
 		kw = kwargs | {'sample_points': x}
-		o_calib.make_response_curve(filter_type, **kw)
-		resp_wave, response = o_calib.get_response_curve(filter_type)
-		resp_line.set_xdata(resp_wave)
-		resp_line.set_ydata(response)
+		o_calib.make_sens_function(GRISM, **kw)
+		sens_wave, sens = o_calib.get_sens_function(GRISM)
+		sens_line.set_xdata(sens_wave)
+		sens_line.set_ydata(sens)
 
 	[sliders[key].on_changed(update) for key in sliders]
 
@@ -166,7 +166,7 @@ def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs)
 			d = {}
 
 		if d.get('sample_points') is None: d['sample_points'] = {}
-		d['sample_points'][filter_type] = sorted([sliders[key].val for key in sliders])
+		d['sample_points'][GRISM] = sorted([sliders[key].val for key in sliders])
 
 		with open(fname, 'wb') as f:
 			pickle.dump(d, f)
@@ -178,7 +178,7 @@ def interactive_response_curve_fit(o_calib, filter_type, num_points=7, **kwargs)
 		[sliders[s].set_val(p) for s,p in zip(sliders, init_points)]
 	res_b.on_clicked(reset)
 
-	plt.suptitle(o_calib.name+" "+filter_type)
+	plt.suptitle(o_calib.name+" "+GRISM)
 	plt.show()
 	return [cl_b, res_b], sliders
 
@@ -203,34 +203,34 @@ def plot_raw_data(wave, raw, tab_interp, ax):
 def plot_sample_points(init_points, interp, tab_interp, ax):
 	pts, = ax[0].plot(init_points, interp(init_points), 'X', color=plt.cm.Set1(0))
 	tab_pts, = ax[1].plot(init_points, tab_interp(init_points), 'X', color=plt.cm.Set1(0))
-	resp_pts, = ax[2].plot(init_points, tab_interp(init_points)/interp(init_points), 'X', color=plt.cm.Set1(0))
+	sens_pts, = ax[2].plot(init_points, tab_interp(init_points)/interp(init_points), 'X', color=plt.cm.Set1(0))
 
-	return pts, tab_pts, resp_pts
+	return pts, tab_pts, sens_pts
 
-def update_sample_points(x, interp, tab_interp, pts, tab_pts, resp_pts):
+def update_sample_points(x, interp, tab_interp, pts, tab_pts, sens_pts):
 	pts.set_xdata(x)
 	tab_pts.set_xdata(x)
-	resp_pts.set_xdata(x)
+	sens_pts.set_xdata(x)
 
 	pts.set_ydata(interp(x))
 	tab_pts.set_ydata(tab_interp(x))
-	resp_pts.set_ydata(tab_interp(x)/interp(x))
+	sens_pts.set_ydata(tab_interp(x)/interp(x))
 
-def plot_spline_fits(wave, o_calib, filter_type, init_points, dat_interp, tab_interp, ax, **kwargs):
+def plot_spline_fits(wave, o_calib, GRISM, init_points, dat_interp, tab_interp, ax, **kwargs):
 	
 	tck = splrep(init_points, dat_interp(init_points))
 	counts = splev(wave, tck)
 	tck = splrep(init_points, tab_interp(init_points))
 	flux = splev(wave, tck)
 	
-	o_calib.make_response_curve(filter_type, **kwargs)
-	resp_wave, response = o_calib.get_response_curve(filter_type)
+	o_calib.make_sens_function(GRISM, **kwargs)
+	sens_wave, sens = o_calib.get_sens_function(GRISM)
 
 	line, = ax[0].plot(wave, counts, color=plt.cm.Set1(0), label='spline fit')
 	tab_line, = ax[1].plot(wave, flux, color=plt.cm.Set1(0), label='spline fit')
-	resp_line, = ax[2].plot(resp_wave, response, label='response curve')
+	sens_line, = ax[2].plot(sens_wave, sens, label='sensitivity function')
 	
-	return line, tab_line, resp_line
+	return line, tab_line, sens_line
 
 def update_splines(x, wave, interp, tab_interp, line, tab_line):
 	flux = get_interpolation(x, wave, tab_interp)
