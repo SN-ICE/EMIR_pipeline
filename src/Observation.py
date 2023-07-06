@@ -498,7 +498,19 @@ class Observation(object):
 		wave, raw_data = self.get_raw_spectrum(grism_type, **kwargs)
 		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, raw_calib_data*sens_fn, grism_type, **kwargs)
 
-		return wave, flux_scaling*raw_data*sens_fn
+		final_spectrum = flux_scaling*raw_data*sens_fn
+		
+		final_sps = getattr(self, 'final_sps', None)
+		final_wvs = getattr(self, 'final_wvs', None)
+		if final_sps is None: final_sps = {}
+		if final_wvs is None: final_wvs = {}
+
+		final_sps[grism_type] = final_spectrum
+		final_wvs[grism_type] = wave
+		setattr(self, 'final_sps', final_sps)
+		setattr(self, 'final_wvs', final_wvs)
+
+		return wave, final_spectrum
 
 	def _calculate_flux_scaling(self, tabulated_magnitude, wave, SN_data, grism_type, **kwargs):
 
@@ -544,4 +556,41 @@ class Observation(object):
 		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%grism_type, grism_type, 
 											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
 		return wave, raw_data
+
+	def save_spectrum(self, fname):
+	
+		final_sps = getattr(self, 'final_sps', None)
+		final_wvs = getattr(self, 'final_wvs', None)
+
+		if final_sps is None: 
+			raise ValueError("No final spectra calculated yet. Run get_reduced_spectra to calculate.")
+
+		self._write_file(fname, final_wvs, final_sps)
+
+	def _write_file(self, fname, final_wvs, final_sps):
+
+		hh = get_header(self, 1)
+
+		grism_types = list(final_sps.keys())
+		file_info = "# TELESCOPE: GTC \n# INSTRUMENT: EMIR \n# GRISM: %s \n# DATE OBS: %s\n# N ABBA CYCLES: %s\n# EXP TIME PER EXPOSURE: %s\n# TOTAL EXP TIME: %s\n# AIRMASS: %.08F\n"
+		fi = file_info%(str(grism_types), 
+                        hh['DATE-OBS'],
+						str([len(self.object_files[gr])//4 for gr in grism_types]),
+                        str([hh['EXPTIME']]*len(grism_types)),
+                        str([hh['EXPTIME']*len(self.object_files[gr]) for gr in grism_types]),
+                        hh['AIRMASS']
+                        )
+
+		with open(fname, 'w') as f:
+			f.write(fi)
+			for wk,sk in zip(final_wvs, final_sps):
+				wave, sp = final_wvs[wk], final_sps[sk]
+				for w, s in zip(wave, sp):
+					if np.isnan(s): continue
+					f.write('%E\t%E\n'%(w,s))
+	
+
+
+
+
 
