@@ -50,6 +50,7 @@ class Observation(object):
 
 		self.qc = self._get_quality_control_info(qc_fname)
 		self.object_files, self.arc_files, self.flat_files = self._get_files()
+		self.grisms = self._get_available_grisms()
 		
 		self.must_generate_flat_field = (len(self.flat_files) != 0 )
 
@@ -126,7 +127,9 @@ class Observation(object):
 		
 		return tuple(files)		
 		
-
+	def _get_available_grisms(self):
+		filters = list(set(self.qc.object_table['FILTER']))
+		return filters
 
 	def _build_EMIR_directory(self):
 		'''
@@ -148,6 +151,12 @@ class Observation(object):
 
 			if f == DEFAULT_FLAT_FIELD_FILE and self.must_generate_flat_field:
 				self._generate_flat_field()
+			elif f == DEFAULT_FLAT_FIELD_FILE:
+				source_file = os.path.join(emir_defaults_dir, f)
+				target_file = os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME) 
+				
+				for grism in self.grisms:
+					shutil.copyfile(source_file, target_file%grism)
 			else:
 				source_file = os.path.join(emir_defaults_dir, f)
 				target_file = os.path.join(self.emir_path, 'data', f)
