@@ -61,8 +61,94 @@ if not np.all(sp == sought_value):
 
 ## How to Use the Pipeline
 
-There are a series of tutorials in the `examples/` file. It would be best to go through them in the following order:
-1. [`OB0011_example.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0011_example.ipynb)
-2. [`OB0012_response_curve.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0012_response_curve.ipynb)
-3. [`OB0012_interactive_response_curve.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0012_interactive_response_curve.ipynb)
-4. [`OB0011_interactive_example.ipynb`](https://github.com/HOSTFLOWS/EMIR_pipeline/blob/main/examples/OB0011_interactive_example.ipynb)
+### Command-line scripts
+
+The quickest way to reduce a pair of observations is with the two driver scripts in the repository root. Both require the `emir` conda environment to be active and `$EMIR_PIPE` to be set.
+
+```bash
+conda activate emir
+export EMIR_PIPE=/path/to/EMIR_pipeline/src   # or add to your shell profile
+export EMIR_DATA_DIR=/path/to/your/data       # optional: avoids --data-dir every time
+```
+
+---
+
+#### `reduce.py` — fully automatic reduction
+
+Reduces a supernova OB and a standard-star OB end-to-end without any user interaction. Grisms are auto-detected from the QC files, standard-star magnitudes are fetched automatically from Simbad, and already-completed steps are skipped on re-runs.
+
+```bash
+python reduce.py <SN_OB> <STD_OB> [options]
+```
+
+| Option | Description |
+|---|---|
+| `--data-dir PATH` | Root directory containing the OB folders. Defaults to `$EMIR_DATA_DIR` or cwd. |
+| `--grisms G [G ...]` | Grism(s) to reduce, e.g. `YJ HK`. Defaults to all grisms common to both QC files. |
+| `--clean` | Delete existing results and start from scratch. |
+| `--no-plot` | Save the figure but skip the interactive plot window. |
+| `--linear` | Use a linear y-axis scale instead of log. |
+| `--out-dir PATH` | Output directory for the spectrum and figure. Defaults to `<SN_OB>/results/`. |
+
+**Examples:**
+
+```bash
+# reduce all common grisms, auto-fetch magnitudes, show plot
+python reduce.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX
+
+# reduce YJ only, linear scale, no interactive window
+python reduce.py OB0001 OB0002 --grisms YJ --linear --no-plot
+
+# with EMIR_DATA_DIR set, the flag can be omitted
+python reduce.py OB0001 OB0002
+```
+
+**Outputs** (written to `<SN_OB>/results/` by default):
+
+- `<SN_OB>_spectrum.txt` — flux-calibrated spectrum, wavelength-sorted (YJ then HK), with a header including `OBJECT`, `GRISM`, `DATE OBS`, exposure time, and airmass.
+- `<SN_OB>_spectrum.png` — plot with telluric bands marked.
+
+---
+
+#### `reduce_interactive.py` — reduction with interactive parameter tuning
+
+Same as `reduce.py` but pauses twice per grism to open interactive matplotlib windows:
+
+1. **Sensitivity function fit** — drag sliders to set the spline knot positions used to fit the standard-star continuum.
+2. **SN position finder** — drag sliders to mark the A (positive) and B (negative) spectral trace rows in the ABBA image.
+
+Click **Finalize** in each window to save the chosen parameters and continue. On re-runs the sliders are pre-loaded with the previously saved values.
+
+```bash
+python reduce_interactive.py <SN_OB> <STD_OB> [options]
+```
+
+All options from `reduce.py` are available, plus:
+
+| Option | Description |
+|---|---|
+| `--skip-sens-interactive` | Skip the sensitivity function window; reuse saved parameters or fall back to defaults. Useful once you are happy with the sensitivity function from a prior run. |
+
+**Examples:**
+
+```bash
+# full interactive run
+python reduce_interactive.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX
+
+# skip the sensitivity function window, still pick the SN position interactively
+python reduce_interactive.py OB0001 OB0002 --skip-sens-interactive
+
+# reduce a single grism interactively, linear scale
+python reduce_interactive.py OB0001 OB0002 --grisms YJ --linear
+```
+
+---
+
+### Jupyter notebook tutorials
+
+For a step-by-step walkthrough of what each pipeline stage does, see the notebooks in `examples/`:
+
+1. [`OB0011_example.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0011_example.ipynb)
+2. [`OB0012_response_curve.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0012_response_curve.ipynb)
+3. [`OB0012_interactive_response_curve.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0012_interactive_response_curve.ipynb)
+4. [`OB0011_interactive_example.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0011_interactive_example.ipynb)
