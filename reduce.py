@@ -220,6 +220,13 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
         color = colors.get(grism, default_colors[i % len(default_colors)])
         ax.plot(wave, flux, color=color, lw=0.8, label=grism)
 
+    # telluric bands
+    telluric_bands = [(13400, 14500), (18000, 20000)]
+    for lo, hi in telluric_bands:
+        ax.axvspan(lo, hi, color='gray', alpha=0.2, zorder=0)
+        ax.text((lo + hi) / 2, 0.97, r'$\oplus$', ha='center', va='top',
+                fontsize=13, color='dimgray', transform=ax.get_xaxis_transform())
+
     ax.set_xlabel(r'Wavelength ($\AA$)')
     ax.set_ylabel(r'Flux (erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$)')
     ax.set_title('%s — GTC/EMIR NIR spectrum' % sn_name)
