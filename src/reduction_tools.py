@@ -1,5 +1,8 @@
 
 import os
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
 import numpy as np
 from astropy.io import fits
 from scipy.interpolate import interp1d
@@ -149,3 +152,44 @@ def get_hydrogen_lines(widths=None):
 
 
     return all_lines, widths
+
+
+def get_std_magnitudes(std_obs):
+    """Query Simbad for the 2MASS J, H, K magnitudes of the standard star.
+
+    The star name is taken from the OBJECT FITS keyword of the standard
+    observation (e.g. 'HIP16897_SN2024xdq' → 'HIP16897').
+
+    Parameters
+    ----------
+    std_obs : Observation
+        The standard-star Observation object.
+
+    Returns
+    -------
+    magnitudes : dict
+        {'J': float, 'H': float, 'K': float}
+    """
+    h = get_header(std_obs, 1)
+    raw_name = h['OBJECT'].split('_')[0]          # 'HIP16897_SN2024xdq' → 'HIP16897'
+    simbad_id = urllib.parse.quote(raw_name)       # URL-safe
+
+    url = ('https://simbad.u-strasbg.fr/simbad/sim-id'
+           '?output.format=votable'
+           '&Ident=' + simbad_id +
+           '&output.params=flux(J),flux(H),flux(K)')
+
+    with urllib.request.urlopen(url, timeout=20) as resp:
+        tree = ET.parse(resp)
+
+    ns = {'vo': 'http://www.ivoa.net/xml/VOTable/v1.2'}
+    root = tree.getroot()
+    tr = root.find('.//vo:TABLEDATA/vo:TR', ns)
+    if tr is None:
+        raise ValueError("Simbad returned no results for '%s'" % raw_name)
+
+    j_mag, h_mag, k_mag = [float(td.text) for td in tr.findall('vo:TD', ns)]
+    magnitudes = {'J': j_mag, 'H': h_mag, 'K': k_mag}
+    print("2MASS magnitudes for %s  →  J=%.3f  H=%.3f  K=%.3f"
+          % (raw_name, j_mag, h_mag, k_mag))
+    return magnitudes
