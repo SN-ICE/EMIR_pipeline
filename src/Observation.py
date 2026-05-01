@@ -581,8 +581,9 @@ class Observation(object):
 		hh = get_header(self, 1)
 
 		grism_types = list(final_sps.keys())
-		file_info = "# TELESCOPE: GTC \n# INSTRUMENT: EMIR \n# GRISM: %s \n# DATE OBS: %s\n# N ABBA CYCLES: %s\n# EXP TIME PER EXPOSURE: %s\n# TOTAL EXP TIME: %s\n# AIRMASS: %.08F\n"
-		fi = file_info%(str(grism_types), 
+		file_info = "# TELESCOPE: GTC \n# INSTRUMENT: EMIR \n# OBJECT: %s \n# GRISM: %s \n# DATE OBS: %s\n# N ABBA CYCLES: %s\n# EXP TIME PER EXPOSURE: %s\n# TOTAL EXP TIME: %s\n# AIRMASS: %.08F\n"
+		fi = file_info%(hh['OBJECT'],
+                        str(grism_types),
                         hh['DATE-OBS'],
 						str([len(self.object_files[gr])//4 for gr in grism_types]),
                         str([hh['EXPTIME']]*len(grism_types)),
@@ -590,13 +591,17 @@ class Observation(object):
                         hh['AIRMASS']
                         )
 
+		# concatenate all grisms and sort by wavelength (YJ then HK)
+		all_wave = np.concatenate([final_wvs[k] for k in grism_types])
+		all_flux = np.concatenate([final_sps[k] for k in grism_types])
+		order = np.argsort(all_wave)
+		all_wave, all_flux = all_wave[order], all_flux[order]
+
 		with open(fname, 'w') as f:
 			f.write(fi)
-			for wk,sk in zip(final_wvs, final_sps):
-				wave, sp = final_wvs[wk], final_sps[sk]
-				for w, s in zip(wave, sp):
-					if np.isnan(s): continue
-					f.write('%E\t%E\n'%(w,s))
+			for w, s in zip(all_wave, all_flux):
+				if np.isnan(s): continue
+				f.write('%E\t%E\n'%(w,s))
 	
 
 
