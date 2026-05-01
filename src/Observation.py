@@ -1,6 +1,7 @@
 import shutil
 import os
 import subprocess
+import sys
 import numpy as np
 from scipy.interpolate import interp1d, splrep, splev
 
@@ -153,14 +154,16 @@ class Observation(object):
 				self._generate_flat_field()
 			elif f == DEFAULT_FLAT_FIELD_FILE:
 				source_file = os.path.join(emir_defaults_dir, f)
-				target_file = os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME) 
-				
+				target_file = os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME)
+
 				for grism in self.grisms:
 					shutil.copyfile(source_file, target_file%grism)
 			else:
 				source_file = os.path.join(emir_defaults_dir, f)
 				target_file = os.path.join(self.emir_path, 'data', f)
 				shutil.copyfile(source_file, target_file)
+
+		open(os.path.join(self.result_dir, "EMIR_directory"), 'w').close()
 
 	def _generate_flat_field(self): 
 		'''
@@ -181,7 +184,7 @@ class Observation(object):
 
 			emir_defaults_dir=os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
 			default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
-			default_fits.data = ff_coadd
+			default_fits[0].data = ff_coadd
 			default_fits.writeto(os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME%fil), overwrite=True)
 			default_fits.close()
 
@@ -223,7 +226,7 @@ class Observation(object):
 
 		with open(os.path.join(self.emir_path, 'control_%s.yaml'%fil), 'w') as f:
 			flat_fname = "master_flat_%s.fits"%fil
-			f.write(CONTROL_YAML_TEMPLATE%(flat_fname,flat_fname))
+			f.write(CONTROL_YAML_TEMPLATE%(flat_fname,flat_fname,flat_fname,flat_fname))
 			f.close()
 
 	def _generate_obs_res(self, analysis_type, grism_type):
@@ -263,19 +266,16 @@ class Observation(object):
 		Run the numina recipe for rectification and calibration.
 		'''
 
-		orig_cwd = os.getcwd()
-		os.chdir(self.emir_path)
+		numina_bin = os.path.join(os.path.dirname(sys.executable), 'numina')
+		result = subprocess.run(
+			[numina_bin, 'run',
+			 '%s_obs_res_%s.yaml' % (analysis_type, grism_type),
+			 '-r', 'control_%s.yaml' % grism_type],
+			capture_output=True, text=True, cwd=self.emir_path)
 
-		result = subprocess.run('numina run %s_obs_res_%s.yaml -r control_%s.yaml'\
-								%(analysis_type,grism_type,grism_type),
-							shell=True, capture_output=True, text=True)
-
-		with open("emir_out.txt", 'w') as f:
+		with open(os.path.join(self.emir_path, "emir_out.txt"), 'w') as f:
 			f.write(result.stdout+'\n\n')
 			f.write(result.stderr+'\n\n')
-			f.close()		
-
-		os.chdir(orig_cwd)
 
 	def ABBA_subtract(self, grism_type):
 
@@ -315,7 +315,7 @@ class Observation(object):
 
 			fID = row['IMAGE'].split('-')[0]
 			fname = fname_base%(self.name, fID)
-			if not os.path.exists(os.path.join(self.emir_path,'obsid%s_%s_results/'))\
+			if not os.path.exists(os.path.join(self.emir_path,'obsid%s_%s_results/'%(self.name, fID)))\
 			  and not os.path.exists(fname) \
 			  and os.path.exists(os.path.join(self.obs_dir, 'object', row['IMAGE'])):
 				print(os.path.join(self.obs_dir, 'object', row['IMAGE']))
@@ -346,7 +346,7 @@ class Observation(object):
 		'''
 		A, B, header = self._get_calibrated_data(grism_type)
 
-		if len(A) != 2 and len(B) != 2:
+		if len(A) != 2 or len(B) != 2:
 			self._subtract_and_save_non_ABBA(grism_type)
 
 		fname = os.path.join(self.abba_dir, "ABBA_subtracted_%s.fits"%grism_type)
@@ -533,12 +533,12 @@ class Observation(object):
 			if fil == 'Y': continue
 			fname = fil+'.txt'
 			fr_wave = [] ; fr_flux = []
-			with open(fresp_dir+fname, 'r') as f:
-				for line in f:
+			with open(fresp_dir+fname, 'r') as fh:
+				for line in fh:
 					if not line[0].isdigit(): continue
-					w,f = line.split()
+					w, fr = line.split()
 					fr_wave += [float(w)*10000]
-					fr_flux += [float(f)]
+					fr_flux += [float(fr)]
     
 			interp = interp1d(fr_wave, fr_flux, kind="linear")
 			data_overlap = (wave>min(fr_wave)) & (wave<max(fr_wave))
