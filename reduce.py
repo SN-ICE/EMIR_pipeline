@@ -70,6 +70,8 @@ def parse_args():
                    help='Delete existing results and start fresh')
     p.add_argument('--no-plot', action='store_true',
                    help='Skip the interactive plot window')
+    p.add_argument('--linear', action='store_true',
+                   help='Use linear y-axis scale instead of log')
     p.add_argument('--out-dir', default=None,
                    help='Output directory for spectrum and figure '
                         '(default: <SN_OB>/results/)')
@@ -116,7 +118,7 @@ def section(msg):
 # Main reduction logic
 # ------------------------------------------------------------------
 
-def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir):
+def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
 
     section('Initialising observations')
     print('  SN  :', sn_path)
@@ -135,18 +137,26 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir):
     # Exclude acquisition images: those have GRISM='OPEN' in the QC table.
     # _get_available_grisms() returns all unique FILTER values, including J/H/K
     # from imaging frames, so we filter them out here.
-    spectro_grisms = list(set(
-        row['FILTER'] for row in osn.qc.object_table if row['GRISM'] != 'OPEN'
-    ))
+    # Use the intersection of SN and std grisms — both must have the data.
+    def spectro_grisms_for(obs):
+        return set(row['FILTER'] for row in obs.qc.object_table if row['GRISM'] != 'OPEN')
+
+    sn_grisms  = spectro_grisms_for(osn)
+    std_grisms = spectro_grisms_for(ost)
+    common_grisms = sorted(sn_grisms & std_grisms)
+
+    if sn_grisms - std_grisms:
+        print('  Warning: grism(s) %s present in SN but not in std star — skipping'
+              % sorted(sn_grisms - std_grisms))
 
     if grisms is None:
-        grisms = spectro_grisms
+        grisms = common_grisms
     else:
-        unknown = [g for g in grisms if g not in spectro_grisms]
+        unknown = [g for g in grisms if g not in common_grisms]
         if unknown:
             raise ValueError(
-                "Grism(s) %s not found in QC file. Available spectroscopy grisms: %s"
-                % (unknown, spectro_grisms)
+                "Grism(s) %s not available in both observations. Common grisms: %s"
+                % (unknown, common_grisms)
             )
 
     print('  Grisms to reduce:', grisms)
@@ -214,7 +224,8 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir):
     ax.set_ylabel(r'Flux (erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$)')
     ax.set_title('%s — GTC/EMIR NIR spectrum' % sn_name)
     ax.legend()
-    ax.set_yscale('log')
+    if not linear:
+        ax.set_yscale('log')
 
     fig_path = os.path.join(out_dir, '%s_spectrum.png' % sn_name)
     fig.savefig(fig_path, dpi=150, bbox_inches='tight')
@@ -251,6 +262,7 @@ def main():
         clean=args.clean,
         no_plot=args.no_plot,
         out_dir=args.out_dir,
+        linear=args.linear,
     )
 
 
