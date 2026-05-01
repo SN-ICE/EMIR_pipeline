@@ -19,6 +19,46 @@ When running any of these functions, be sure to activate your EMIR conda environ
 conda activate emir
 ```
 
+## Known Issues / Required Patches
+
+After installing PyEMIR (numina 0.35.2), two bugs in the numina package must be patched manually before the pipeline will run correctly.
+
+### 1. Typo in `numina/array/interpolation.py`
+
+numina 0.35.2 contains a typo (`'rigth'` instead of `'right'`) that causes a `ValueError` when running the wavelength calibration step.
+
+Find the file inside your conda environment:
+```
+$CONDA_PREFIX/lib/python3.XX/site-packages/numina/array/interpolation.py
+```
+
+On line ~153, change:
+```python
+x_indices = np.searchsorted(self._x, v, side='rigth')
+```
+to:
+```python
+x_indices = np.searchsorted(self._x, v, side='right')
+```
+
+### 2. NumPy 2.0 incompatibility in `numina/array/wavecalib/fix_pix_borders.py`
+
+`np.alltrue` was removed in NumPy 2.0. If you are using a recent NumPy, numina will crash with `AttributeError: module 'numpy' has no attribute 'alltrue'`.
+
+Find the file inside your conda environment:
+```
+$CONDA_PREFIX/lib/python3.XX/site-packages/numina/array/wavecalib/fix_pix_borders.py
+```
+
+On line ~44, change:
+```python
+if not np.alltrue(sp == sought_value):
+```
+to:
+```python
+if not np.all(sp == sought_value):
+```
+
 ## How to Use the Pipeline
 
 There are a series of tutorials in the `examples/` file. It would be best to go through them in the following order:
