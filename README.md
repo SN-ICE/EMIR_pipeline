@@ -63,7 +63,7 @@ if not np.all(sp == sought_value):
 
 ### Command-line scripts
 
-The quickest way to reduce a pair of observations is with the two driver scripts in the repository root. Both require the `emir` conda environment to be active and `$EMIR_PIPE` to be set.
+The standard spectroscopy pipeline is [`reduce_spec.py`](/Users/lluisgalbany/EMIR_pipeline/reduce_spec.py). It is interactive by design: for each grism it lets you confirm the standard-star sensitivity-function anchor points and the SN trace position before flux calibration continues.
 
 ```bash
 conda activate emir
@@ -73,12 +73,17 @@ export EMIR_DATA_DIR=/path/to/your/data       # optional: avoids --data-dir ever
 
 ---
 
-#### `reduce.py` — fully automatic reduction
+#### `reduce_spec.py` — interactive spectroscopy reduction
 
-Reduces a supernova OB and a standard-star OB end-to-end without any user interaction. Grisms are auto-detected from the QC files, standard-star magnitudes are fetched automatically from Simbad, and already-completed steps are skipped on re-runs.
+Reduces a supernova OB and a standard-star OB end-to-end. Grisms are auto-detected from the QC files, standard-star magnitudes are fetched automatically from Simbad, and already-completed steps are skipped on re-runs. For each grism, the script opens two matplotlib windows:
+
+1. **Sensitivity function fit** — drag the sliders to place the spline anchor points on the standard-star continuum.
+2. **SN position finder** — drag the sliders to mark the positive and negative trace rows used for the final extraction.
+
+Click **Finalize** in each window to save the chosen parameters and continue. On re-runs the sliders are pre-loaded with the previously saved values from `<OB>/results/interactive_parameters.pkl`.
 
 ```bash
-python reduce.py <SN_OB> <STD_OB> [options]
+python reduce_spec.py <SN_OB> <STD_OB> [options]
 ```
 
 | Option | Description |
@@ -86,61 +91,45 @@ python reduce.py <SN_OB> <STD_OB> [options]
 | `--data-dir PATH` | Root directory containing the OB folders. Defaults to `$EMIR_DATA_DIR` or cwd. |
 | `--grisms G [G ...]` | Grism(s) to reduce, e.g. `YJ HK`. Defaults to all grisms common to both QC files. |
 | `--clean` | Delete existing results and start from scratch. |
-| `--no-plot` | Save the figure but skip the interactive plot window. |
+| `--no-plot` | Save the final figure but skip the final interactive spectrum window. |
 | `--linear` | Use a linear y-axis scale instead of log. |
 | `--out-dir PATH` | Output directory for the spectrum and figure. Defaults to `<SN_OB>/results/`. |
-
-**Examples:**
-
-```bash
-# reduce all common grisms, auto-fetch magnitudes, show plot
-python reduce.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX
-
-# reduce YJ only, linear scale, no interactive window
-python reduce.py OB0001 OB0002 --grisms YJ --linear --no-plot
-
-# with EMIR_DATA_DIR set, the flag can be omitted
-python reduce.py OB0001 OB0002
-```
-
-**Outputs** (written to `<SN_OB>/results/` by default):
-
-- `<SN_OB>_spectrum.txt` — flux-calibrated spectrum, wavelength-sorted (YJ then HK), with a header including `OBJECT`, `GRISM`, `DATE OBS`, exposure time, and airmass.
-- `<SN_OB>_spectrum.png` — plot with telluric bands marked.
-
----
-
-#### `reduce_interactive.py` — reduction with interactive parameter tuning
-
-Same as `reduce.py` but pauses twice per grism to open interactive matplotlib windows:
-
-1. **Sensitivity function fit** — drag sliders to set the spline knot positions used to fit the standard-star continuum.
-2. **SN position finder** — drag sliders to mark the A (positive) and B (negative) spectral trace rows in the ABBA image.
-
-Click **Finalize** in each window to save the chosen parameters and continue. On re-runs the sliders are pre-loaded with the previously saved values.
-
-```bash
-python reduce_interactive.py <SN_OB> <STD_OB> [options]
-```
-
-All options from `reduce.py` are available, plus:
-
-| Option | Description |
-|---|---|
-| `--skip-sens-interactive` | Skip the sensitivity function window; reuse saved parameters or fall back to defaults. Useful once you are happy with the sensitivity function from a prior run. |
+| `--skip-sens-interactive` | Skip the sensitivity-function window and reuse saved anchor points, or fall back to defaults if none exist. |
 
 **Examples:**
 
 ```bash
 # full interactive run
-python reduce_interactive.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX
+python reduce_spec.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX
 
-# skip the sensitivity function window, still pick the SN position interactively
-python reduce_interactive.py OB0001 OB0002 --skip-sens-interactive
+# skip the sensitivity-function window, but still confirm the SN trace interactively
+python reduce_spec.py OB0001 OB0002 --skip-sens-interactive
 
-# reduce a single grism interactively, linear scale
-python reduce_interactive.py OB0001 OB0002 --grisms YJ --linear
+# reduce a single grism on a linear scale
+python reduce_spec.py OB0001 OB0002 --grisms YJ --linear
+
+# with EMIR_DATA_DIR set, the flag can be omitted
+python reduce_spec.py OB0001 OB0002
 ```
+
+**Outputs** (written to `<SN_OB>/results/` by default):
+
+- `SNNAME_DATEOBS_YJ.txt` — flux-calibrated YJ spectrum.
+- `SNNAME_DATEOBS_HK.txt` — flux-calibrated HK spectrum.
+- `SNNAME_DATEOBS.txt` — combined spectrum.
+- `SNNAME_DATEOBS.png` — single combined plot with telluric bands marked and the propagated error band shown.
+
+---
+
+#### `reduce_imaging.py` — EMIR imaging reduction
+
+For EMIR imaging OBs, use:
+
+```bash
+python reduce_imaging.py <OB_FOLDER> [--skip-check]
+```
+
+This expects an imaging-style OB containing at least `object/` and `flat/`, and writes the reduced imaging products into the OB’s reduction area.
 
 ---
 
@@ -148,7 +137,5 @@ python reduce_interactive.py OB0001 OB0002 --grisms YJ --linear
 
 For a step-by-step walkthrough of what each pipeline stage does, see the notebooks in `examples/`:
 
-1. [`OB0011_example.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0011_example.ipynb)
-2. [`OB0012_response_curve.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0012_response_curve.ipynb)
-3. [`OB0012_interactive_response_curve.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0012_interactive_response_curve.ipynb)
-4. [`OB0011_interactive_example.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0011_interactive_example.ipynb)
+1. [`OB0011_interactive_example.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0011_interactive_example.ipynb)
+2. [`OB0012_interactive_sensitivity_function.ipynb`](https://github.com/SN-ICE/EMIR_pipeline/blob/main/examples/OB0012_interactive_sensitivity_function.ipynb)
