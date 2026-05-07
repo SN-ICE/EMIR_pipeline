@@ -2,11 +2,13 @@
 """
 EMIR interactive pipeline driver script.
 
-Mirrors the spectroscopy reduction workflow but adds two interactive
+Mirrors the spectroscopy reduction workflow but adds interactive
 matplotlib windows per grism:
-  1. Standard-star sensitivity function fit — drag sliders to position the
+  1. Standard-star trace finder — drag sliders to mark the A (positive)
+     and B (negative) spectral trace rows in the ABBA image.
+  2. Standard-star sensitivity function fit — drag sliders to position the
      spline knots used to fit the std-star continuum.
-  2. SN position finder — drag sliders to mark the A (positive) and B
+  3. SN position finder — drag sliders to mark the A (positive) and B
      (negative) spectral trace rows in the ABBA image.
 
 Both windows show a "Finalize" button; clicking it saves the chosen
@@ -388,6 +390,18 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir,
             ost.initialize('object', grism)
             ost.rectify_and_analyze('object', grism)
             ost.ABBA_subtract(grism)
+
+        # --- Interactive std-star position finder ---
+        section('Grism %s — interactive standard-star trace finder' % grism)
+        print('  Drag the sliders to align the extraction window with the standard-star trace.')
+        print('  Click "Finalize" when done.\n')
+        std_trace_result = interactive_SN_position_finder(ost, grism)
+        if std_trace_result is None or 'SN_position' not in std_trace_result:
+            raise RuntimeError(
+                'Interactive standard-star trace finder for grism %s was closed before '
+                'clicking Finalize' % grism
+            )
+        print('  Standard-star trace saved:', std_trace_result.get('SN_position'))
 
         # --- Interactive sensitivity function fit ---
         if not skip_sens_interactive:
