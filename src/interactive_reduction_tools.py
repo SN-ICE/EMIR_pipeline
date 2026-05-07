@@ -15,20 +15,6 @@ from reduction_tools import *
 
 def get_parameters(o, GRISM):
 
-	if not os.path.exists(o.result_dir+"/interactive_parameters.pkl"): return {}
-	
-	kwa = {}
-	with open(o.result_dir+"/interactive_parameters.pkl", 'rb') as f:
-		d = pickle.load(f)
-		if 'SN_positions' in d and GRISM in d['SN_positions']:
-			kwa['SN_position'] = d['SN_positions'][GRISM]
-		if 'sample_points' in d and GRISM in d['sample_points']:
-			kwa['sample_points'] = d['sample_points'][GRISM]
-	
-	return kwa
-
-def get_parameters(o, GRISM):
-
     if not os.path.exists(o.result_dir+"/interactive_parameters.pkl"): return {}
 
     kwa = {}
@@ -59,7 +45,19 @@ def interactive_SN_position_finder(o, GRISM):
 	y_flat_low = np.sum(abba_low, axis=1)
 	y_flat_high = np.sum(abba_high, axis=1)
 
-	low = 1000 ; high = 1500
+	low = 500
+	high = min(1500, len(y_flat) - 1)
+	if high <= low:
+		low = 0
+		high = len(y_flat) - 1
+
+	default_low = low + int(np.argmin(y_flat[low:high]))
+	default_high = low + int(np.argmax(y_flat[low:high]))
+	initial_position = kwa.get('SN_position', (default_low, default_high))
+	initial_position = (
+		int(np.clip(initial_position[0], low, high)),
+		int(np.clip(initial_position[1], low, high)),
+	)
 	axs[1].plot(y_flat, label='full sum')
 	axs[1].plot(y_flat_low, label='left side of image')
 	axs[1].plot(y_flat_high, label='right side of image')
@@ -78,13 +76,15 @@ def interactive_SN_position_finder(o, GRISM):
 	plt.subplots_adjust(bottom=0.3, top=0.95)
 
 	high_ax = plt.axes([0.45, 0.15, 0.4, 0.03])
-	high_slider = Slider(high_ax, label="A (positive peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1,1])[1])
+	high_slider = Slider(high_ax, label="A (positive peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=initial_position[1])
 	low_ax = plt.axes([0.45, 0.10, 0.4, 0.03])
-	low_slider = Slider(low_ax, label="B (negative peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=kwa.get('SN_position', [1,1])[0])
+	low_slider = Slider(low_ax, label="B (negative peak) position", valmin=low, valmax=high, valstep=idx_range, valinit=initial_position[0])
 
 	ax = plt.axes([0.01, 0.01, 0.1, 0.075])
 	button = Button(ax, 'Finalize',color="yellow")
+	state = {'finalized': False, 'SN_position': None}
 	def close_and_save(val):
+		final_position = (ctrls.params['low'], ctrls.params['high'])
 		fname = o.result_dir+'/interactive_parameters.pkl'
 		if os.path.exists(fname):
 			with open(o.result_dir+'/interactive_parameters.pkl', 'rb') as f:
@@ -93,12 +93,14 @@ def interactive_SN_position_finder(o, GRISM):
 			d = {}
 
 		if d.get('SN_positions') is None: d['SN_positions'] = {}
-		d['SN_positions'][GRISM] = (ctrls.params['low'], ctrls.params['high'])
+		d['SN_positions'][GRISM] = final_position
 
 		with open(fname, 'wb') as f:
 			pickle.dump(d, f)
 
-		plt.close()
+		state['finalized'] = True
+		state['SN_position'] = final_position
+		plt.close(fig)
 	button.on_clicked(close_and_save)
 	
 	ctrls = iplt.plot(raw_wave, f, low=low_slider, high=high_slider, ax=axs[0], label='raw data')
@@ -108,7 +110,9 @@ def interactive_SN_position_finder(o, GRISM):
 
 	plt.suptitle(o.name+" "+GRISM)
 	plt.show()
-	return button, ctrls.params	
+	if state['finalized']:
+		return {'SN_position': state['SN_position']}
+	return None
 
 def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 
@@ -134,13 +138,17 @@ def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 	else:
 		init_points = [wave[0]+(wave[-1]-wave[0])*i/num_points for i in range(num_points)]
 
+	def current_kwargs(sample_points):
+		return kwargs | kwa | {'sample_points': sorted(sample_points)}
+
 	cl_b, res_b, sliders = init_widgets(wave, init_points, ax[3:])
 	plot_raw_data(wave, raw, tab_interp, ax)
 
 	pts, tab_pts, sens_pts = plot_sample_points(init_points, interp, tab_interp, ax)
 	line, tab_line, sens_line = plot_spline_fits(wave, o_calib, GRISM, 
-												 init_points, interp, tab_interp, ax, **(kwargs|kwa))
+												 init_points, interp, tab_interp, ax, **current_kwargs(init_points))
 	[a.legend() for a in ax[:3]]
+	state = {'finalized': False, 'sample_points': None}
 
 	def update(val):
 		global x
@@ -149,8 +157,7 @@ def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 		update_sample_points(x, interp, tab_interp, pts, tab_pts, sens_pts)
 		flux, counts = update_splines(x, wave, interp, tab_interp, line, tab_line)
 
-		kw = kwargs | {'sample_points': x}
-		o_calib.make_sens_function(GRISM, **kw)
+		o_calib.make_sens_function(GRISM, **current_kwargs(x))
 		sens_wave, sens = o_calib.get_sens_function(GRISM)
 		sens_line.set_xdata(sens_wave)
 		sens_line.set_ydata(sens)
@@ -158,6 +165,8 @@ def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 	[sliders[key].on_changed(update) for key in sliders]
 
 	def close_and_save(val):
+		final_points = sorted([sliders[key].val for key in sliders])
+		o_calib.make_sens_function(GRISM, **current_kwargs(final_points))
 		fname = o_calib.result_dir+'/interactive_parameters.pkl'
 		if os.path.exists(fname):
 			with open(o_calib.result_dir+'/interactive_parameters.pkl', 'rb') as f:
@@ -166,12 +175,14 @@ def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 			d = {}
 
 		if d.get('sample_points') is None: d['sample_points'] = {}
-		d['sample_points'][GRISM] = sorted([sliders[key].val for key in sliders])
+		d['sample_points'][GRISM] = final_points
 
 		with open(fname, 'wb') as f:
 			pickle.dump(d, f)
 
-		plt.close()
+		state['finalized'] = True
+		state['sample_points'] = final_points
+		plt.close(fig)
 	cl_b.on_clicked(close_and_save)
 
 	def reset(val):
@@ -180,7 +191,9 @@ def interactive_sens_function_fit(o_calib, GRISM, num_points=7, **kwargs):
 
 	plt.suptitle(o_calib.name+" "+GRISM)
 	plt.show()
-	return [cl_b, res_b], sliders
+	if state['finalized']:
+		return {'sample_points': state['sample_points']}
+	return None
 
 def init_widgets(wave, init_points, slider_axs):
 	sliders = {'point %i'%i: Slider(slider_axs[i], label="", 

@@ -9,6 +9,9 @@ from scipy.interpolate import interp1d
 
 from matplotlib import pyplot as plt
 
+EXTRACTION_HALF_HEIGHT = 5
+BACKGROUND_MARGIN = 5
+
 def get_extrema_row(ABBA):
     
     max_row = -np.inf ; min_row = np.inf
@@ -37,11 +40,51 @@ def pixels_to_wavelength(file_header):
     wavelengths = crval1 + (np.arange(1, naxis1 + 1) - crpix1) * cdelt1
     return wavelengths
     
-def combine_ABBA(ABBA, max_i, min_i):
-    sp1 = np.sum(ABBA[max_i-5:max_i+5, :], axis=0)
-    sp2 = -np.sum(ABBA[min_i-5:min_i+5, :], axis=0)
+def combine_ABBA(ABBA, max_i, min_i, half_height=EXTRACTION_HALF_HEIGHT):
+    sp1 = np.sum(ABBA[max_i-half_height:max_i+half_height, :], axis=0)
+    sp2 = -np.sum(ABBA[min_i-half_height:min_i+half_height, :], axis=0)
 
     return sp1 + sp2
+
+
+def get_extraction_rows(ABBA, SN_position=None):
+    if SN_position is None:
+        return get_extrema_row(ABBA)
+    if type(SN_position) == tuple:
+        min_i, max_i = SN_position
+        return max_i, min_i
+
+    new_im = np.empty_like(ABBA)
+    new_im[:] = np.nan
+    new_im[SN_position-60:SN_position+60,:] = ABBA[SN_position-60:SN_position+60,:]
+    return get_extrema_row(new_im)
+
+
+def estimate_spectrum_error(ABBA, max_i, min_i,
+                            half_height=EXTRACTION_HALF_HEIGHT,
+                            background_margin=BACKGROUND_MARGIN):
+    nrows, ncols = ABBA.shape
+    background_mask = np.ones(nrows, dtype=bool)
+
+    for center in (max_i, min_i):
+        lo = max(0, center - half_height - background_margin)
+        hi = min(nrows, center + half_height + background_margin)
+        background_mask[lo:hi] = False
+
+    background = ABBA[background_mask, :]
+    if background.size == 0:
+        sigma_pix = np.full(ncols, np.nan)
+    else:
+        median = np.nanmedian(background, axis=0)
+        mad = np.nanmedian(np.abs(background - median), axis=0)
+        sigma_pix = 1.4826 * mad
+
+        fallback = np.nanstd(background, axis=0, ddof=1)
+        invalid = ~np.isfinite(sigma_pix) | (sigma_pix == 0)
+        sigma_pix[invalid] = fallback[invalid]
+
+    n_extract_rows = 4 * half_height
+    return np.sqrt(n_extract_rows) * sigma_pix
 
 def smooth(y, radius=10):
     smoothed_data = []
@@ -65,7 +108,7 @@ def fits_to_data(fname):
 
     return pixels_to_wavelength(header), ydata
 
-def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
+def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False, return_error=False):
     
     ABBA_file = fits.open(ABBA_fname)
     try:
@@ -77,16 +120,7 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
         ABBA_header = ABBA_file[0].header
         ABBA_file.close()
 
-
-    if SN_position is None:
-        max_i, min_i = get_extrema_row(ABBA)
-    elif type(SN_position) == tuple:
-        min_i, max_i = SN_position
-    else:
-        new_im = np.empty_like(ABBA)
-        new_im[:] = np.nan
-        new_im[SN_position-60:SN_position+60,:] = ABBA[SN_position-60:SN_position+60,:]
-        min_i, max_i = get_extrema_row(new_im)
+    max_i, min_i = get_extraction_rows(ABBA, SN_position=SN_position)
     
     wavelengths = pixels_to_wavelength(ABBA_header)
 
@@ -102,9 +136,13 @@ def get_spectrum(ABBA_fname, grism, SN_position=None, debug=False):
         plt.show()
 
     spectrum = combine_ABBA(ABBA, max_i, min_i)
+    spectrum_error = estimate_spectrum_error(ABBA, max_i, min_i)
     exptime = ABBA_header['exptime']
     spectrum = spectrum / (2 * exptime)
-    
+    spectrum_error = spectrum_error / (2 * exptime)
+
+    if return_error:
+        return spectrum, spectrum_error, wavelengths, ABBA_header
     return spectrum, wavelengths, ABBA_header
 
 def get_atmospheric_spectrum(wavelengths):

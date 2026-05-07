@@ -2,6 +2,7 @@ import shutil
 import os
 import subprocess
 import sys
+import re
 import numpy as np
 from scipy.interpolate import interp1d, splrep, splev
 
@@ -98,10 +99,151 @@ class Observation(object):
 				if f[-4:] == ".txt" and f[:3] == "GTC":
 					qc_filename = os.path.join(self.obs_dir,f)
 					break
-		try:	
-			return Quality_Control(qc_filename)
-		except UnboundLocalError:
+		if qc_filename is None:
+			qc_filename = self._build_synthetic_quality_control_file()
+
+		if qc_filename is None or not os.path.exists(qc_filename):
 			raise FileNotFoundError("No valid quality control file for observation %s"%self.name)
+
+		return Quality_Control(qc_filename)
+
+	def _build_synthetic_quality_control_file(self):
+		'''
+		Builds a QC-like text file from FITS headers when the delivered QC file
+		is missing. The existing Quality_Control parser is then reused unchanged.
+		'''
+
+		header_columns = [
+			"IMAGE", "GTCPRGID", "GTCOBID", "OBJECT", "RA", "DEC", "TELPOS",
+			"SLITNAME", "CSUP28", "CSUP83", "XDTU", "YDTU", "FILTER", "GRISM",
+			"IPA", "AIRMASS", "NOBSBLCK", "OBSBLOCK", "NIMGOBLK", "IMGOBBL",
+			"NUXP", "EXP", "READMODE", "INTTIME", "SECTIME", "NFRSEQ", "NSEC",
+			"LAMPHG1", "LAMPNE1", "LAMPXE1", "LAMPINCD", "LAMPINTN", "UTC",
+			"LBLIND", "WINDCOV", "OBSMODE"
+		]
+
+		section_rows = {}
+		for section in ["object", "flat", "arc"]:
+			section_rows[section] = self._build_synthetic_qc_rows(section, header_columns)
+
+		if all(len(rows) == 0 for rows in section_rows.values()):
+			return None
+
+		qc_path = os.path.join(self.result_dir, "synthetic_qc.txt")
+		with open(qc_path, "w") as f:
+			f.write("Synthetic quality control file generated from FITS headers\n")
+			f.write("IMAGE " + " ".join(header_columns[1:]) + "\n")
+			for row in section_rows["object"]:
+				f.write(" ".join(row) + "\n")
+
+			for label in ["flat", "arc"]:
+				f.write("%s\n" % label.capitalize())
+				f.write("----\n")
+				for row in section_rows[label]:
+					f.write(" ".join(row) + "\n")
+
+		return qc_path
+
+	def _build_synthetic_qc_rows(self, section, header_columns):
+		'''
+		Extracts a QC-style row per FITS file for the requested observation
+		section (object / flat / arc).
+		'''
+
+		section_dir = os.path.join(self.obs_dir, section)
+		if not os.path.exists(section_dir):
+			return []
+
+		file_names = sorted(
+			f for f in os.listdir(section_dir)
+			if f.lower().endswith((".fits", ".fit", ".fts"))
+		)
+
+		rows = []
+		n_files = len(file_names)
+		for index, file_name in enumerate(file_names, start=1):
+			header = fits.getheader(os.path.join(section_dir, file_name))
+			row = [
+				self._format_qc_value(
+					self._get_synthetic_qc_value(
+						column=column,
+						header=header,
+						file_name=file_name,
+						section=section,
+						index=index,
+						n_files=n_files,
+					)
+				)
+				for column in header_columns
+			]
+			rows.append(row)
+
+		return rows
+
+	def _get_synthetic_qc_value(self, column, header, file_name, section, index, n_files):
+		'''
+		Maps FITS header keywords into the QC columns expected by the parser.
+		'''
+
+		default_map = {
+			"IMAGE": file_name,
+			"GTCPRGID": header.get("GTCPRGID", "UNKNOWN"),
+			"GTCOBID": header.get("GTCOBID", self.name),
+			"OBJECT": header.get("OBJECT", section.upper()),
+			"RA": header.get("RA", "00:00:00.0"),
+			"DEC": header.get("DEC", "00:00:00.0"),
+			"TELPOS": header.get("TELPOS", "SOURCE" if section != "object" else "UNKNOWN"),
+			"SLITNAME": header.get("SLITNAME", "UNKNOWN"),
+			"CSUP28": header.get("CSUP28", 0),
+			"CSUP83": header.get("CSUP83", 0),
+			"XDTU": header.get("XDTU", 0),
+			"YDTU": header.get("YDTU", 0),
+			"FILTER": header.get("FILTER", "UNKNOWN"),
+			"GRISM": header.get("GRISM", "UNKNOWN"),
+			"IPA": header.get("IPA", 0),
+			"AIRMASS": header.get("AIRMASS", 0),
+			"NOBSBLCK": header.get("NOBSBLCK", 1),
+			"OBSBLOCK": header.get("OBSBLOCK", header.get("GTCOBID", self.name)),
+			"NIMGOBLK": header.get("NIMGOBLK", n_files),
+			"IMGOBBL": header.get("IMGOBBL", index),
+			"NUXP": header.get("NUXP", header.get("EXP", 1)),
+			"EXP": header.get("EXP", 1),
+			"READMODE": header.get("READMODE", "UNKNOWN"),
+			"INTTIME": header.get("INTTIME", header.get("ITIME", header.get("EXPTIME", 0))),
+			"SECTIME": header.get("SECTIME", 0),
+			"NFRSEQ": header.get("NFRSEQ", 1),
+			"NSEC": header.get("NSEC", 1),
+			"LAMPHG1": header.get("LAMPHG1", False),
+			"LAMPNE1": header.get("LAMPNE1", False),
+			"LAMPXE1": header.get("LAMPXE1", False),
+			"LAMPINCD": header.get("LAMPINCD", False),
+			"LAMPINTN": header.get("LAMPINTN", 0),
+			"LBLIND": header.get("LBLIND", 0),
+			"WINDCOV": header.get("WINDCOV", 0),
+			"OBSMODE": header.get("OBSMODE", section.upper()),
+		}
+
+		if column == "UTC":
+			date_obs = header.get("DATE-OBS", "")
+			return date_obs.split("T", 1)[1] if "T" in date_obs else date_obs
+
+		return default_map[column]
+
+	def _format_qc_value(self, value):
+		'''
+		Formats a FITS/header value into a whitespace-safe QC token.
+		'''
+
+		if value is None:
+			return "UNKNOWN"
+		if isinstance(value, (bool, np.bool_)):
+			return "TRUE" if value else "FALSE"
+
+		text = str(value).strip()
+		if text == "":
+			return "UNKNOWN"
+
+		return text.replace(" ", "_")
 			
 
 	def _get_files(self):
@@ -125,8 +267,43 @@ class Observation(object):
 			pathtype = tname[:-len('_table')]
 			path = os.path.join(self.obs_dir,pathtype)
 			setattr(self, "%s_path"%pathtype, path)
+
+			# Delivered QC files can become stale after files are added manually.
+			# For calibration sections, supplement the QC listing from FITS headers
+			# found on disk so copied HK/YJ flats/arcs are still discoverable.
+			if pathtype in ['flat', 'arc']:
+				discovered_files = self._discover_files_from_headers(path)
+				for grism_type, file_list in discovered_files.items():
+					files[i].setdefault(grism_type, [])
+					for fname in file_list:
+						if fname not in files[i][grism_type]:
+							files[i][grism_type].append(fname)
 		
 		return tuple(files)		
+
+	def _discover_files_from_headers(self, path):
+		'''
+		Groups FITS files in a directory by their FILTER header keyword.
+		Used to supplement stale QC calibration tables with the files that are
+		actually present on disk.
+		'''
+
+		discovered = {}
+		if not os.path.exists(path):
+			return discovered
+
+		for fname in sorted(os.listdir(path)):
+			if not fname.lower().endswith((".fits", ".fit", ".fts")):
+				continue
+
+			header = fits.getheader(os.path.join(path, fname))
+			filter_name = header.get('FILTER')
+			if filter_name is None:
+				continue
+
+			discovered.setdefault(filter_name, []).append(fname)
+
+		return discovered
 		
 	def _get_available_grisms(self):
 		filters = list(set(self.qc.object_table['FILTER']))
@@ -308,6 +485,7 @@ class Observation(object):
 	def _get_calibrated_data(self, grism_type): 
 		
 		A = [] ; B = []
+		skipped_telpos = set()
 		fname_base = os.path.join(self.emir_path,'obsid%s_%s_results/reduced_mos.fits')
 
 		for row in self.qc.object_table:
@@ -330,8 +508,15 @@ class Observation(object):
 				header = fi[0].header
 				B += [fi[0].data.astype(float)]
 			else:
-				raise ValueError("TELPOS should be NOD_A or NOD_B not %s (observation %s)"%(row['TELPOS'],self.name))
+				skipped_telpos.add(str(row['TELPOS']))
+				continue
 			fi.close()
+
+		if len(skipped_telpos) != 0:
+			print(
+				"WARNING: skipping non-ABBA TELPOS values %s in observation %s"
+				% (sorted(skipped_telpos), self.name)
+			)
 
 		if len(A) == 0 or len(B) == 0:
 			err_msg = "%i files in A position, %i in B, %i files in total (observation %s)"%(len(A), len(B), len(self.qc.object_table), self.name)
@@ -504,22 +689,71 @@ class Observation(object):
 		
 		wave, sens_fn = calibration_obs.get_sens_function(grism_type)
 		wave, raw_calib_data = calibration_obs.get_raw_spectrum(grism_type, **get_parameters(calibration_obs, grism_type))
-		wave, raw_data = self.get_raw_spectrum(grism_type, **kwargs)
+		wave, raw_data, raw_error = self.get_raw_spectrum(grism_type, return_error=True, **kwargs)
 		flux_scaling = self._calculate_flux_scaling(tabulated_magnitude, wave, raw_calib_data*sens_fn, grism_type, **kwargs)
 
 		final_spectrum = flux_scaling*raw_data*sens_fn
+		stat_error = np.abs(flux_scaling*sens_fn) * raw_error
+		calib_fraction = calibration_obs.get_calibration_fractional_uncertainty(grism_type)
+		calib_error = np.abs(final_spectrum) * calib_fraction
+		final_error = np.sqrt(stat_error**2 + calib_error**2)
 		
 		final_sps = getattr(self, 'final_sps', None)
 		final_wvs = getattr(self, 'final_wvs', None)
+		final_errs = getattr(self, 'final_errs', None)
+		final_stat_errs = getattr(self, 'final_stat_errs', None)
+		final_calib_fracs = getattr(self, 'final_calib_fracs', None)
 		if final_sps is None: final_sps = {}
 		if final_wvs is None: final_wvs = {}
+		if final_errs is None: final_errs = {}
+		if final_stat_errs is None: final_stat_errs = {}
+		if final_calib_fracs is None: final_calib_fracs = {}
 
 		final_sps[grism_type] = final_spectrum
 		final_wvs[grism_type] = wave
+		final_errs[grism_type] = final_error
+		final_stat_errs[grism_type] = stat_error
+		final_calib_fracs[grism_type] = calib_fraction
 		setattr(self, 'final_sps', final_sps)
 		setattr(self, 'final_wvs', final_wvs)
+		setattr(self, 'final_errs', final_errs)
+		setattr(self, 'final_stat_errs', final_stat_errs)
+		setattr(self, 'final_calib_fracs', final_calib_fracs)
 
-		return wave, final_spectrum
+		return wave, final_spectrum, final_error, stat_error
+
+	def get_calibration_fractional_uncertainty(self, grism_type):
+		calib_fracs = getattr(self, 'calib_frac_uncertainties', None)
+		if calib_fracs is not None and grism_type in calib_fracs:
+			return calib_fracs[grism_type]
+
+		params = get_parameters(self, grism_type)
+		wave, sens_fn = self.get_sens_function(grism_type)
+		wave, raw_data = self.get_raw_spectrum(grism_type, **params)
+		tabulated_flux = self._get_tablulated_flux(wave, **params)
+		calibrated_flux = raw_data * sens_fn
+
+		denom = np.clip(np.abs(tabulated_flux), np.nanmax(np.abs(tabulated_flux)) * 1e-6, None)
+		frac_residual = np.abs(calibrated_flux - tabulated_flux) / denom
+		valid = np.isfinite(frac_residual)
+
+		if not np.any(valid):
+			calib_fraction = 0.0
+		else:
+			sample = frac_residual[valid]
+			med = np.nanmedian(sample)
+			mad = 1.4826 * np.nanmedian(np.abs(sample - med))
+			if np.isfinite(mad) and mad > 0:
+				clip_mask = np.abs(sample - med) < 5 * mad
+				if np.any(clip_mask):
+					sample = sample[clip_mask]
+			calib_fraction = np.sqrt(np.nanmean(sample**2))
+
+		if calib_fracs is None:
+			calib_fracs = {}
+		calib_fracs[grism_type] = calib_fraction
+		setattr(self, 'calib_frac_uncertainties', calib_fracs)
+		return calib_fraction
 
 	def _calculate_flux_scaling(self, tabulated_magnitude, wave, SN_data, grism_type, **kwargs):
 
@@ -561,50 +795,121 @@ class Observation(object):
 
 		return f_zp
 
-	def get_raw_spectrum(self, grism_type, **kwargs):
-		raw_data, wave, header = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%grism_type, grism_type, 
-											  SN_position=kwargs.get('SN_position', None), debug=kwargs.get('raw_debug', False))
+	def get_raw_spectrum(self, grism_type, return_error=False, **kwargs):
+		spectrum = get_spectrum(self.abba_dir+'/ABBA_subtracted_%s.fits'%grism_type, grism_type,
+								SN_position=kwargs.get('SN_position', None),
+								debug=kwargs.get('raw_debug', False),
+								return_error=return_error)
+		if return_error:
+			raw_data, raw_error, wave, header = spectrum
+			return wave, raw_data, raw_error
+
+		raw_data, wave, header = spectrum
 		return wave, raw_data
 
 	def save_spectrum(self, fname):
 	
 		final_sps = getattr(self, 'final_sps', None)
 		final_wvs = getattr(self, 'final_wvs', None)
+		final_errs = getattr(self, 'final_errs', None)
+		final_stat_errs = getattr(self, 'final_stat_errs', None)
+		final_calib_fracs = getattr(self, 'final_calib_fracs', None)
 
 		if final_sps is None: 
 			raise ValueError("No final spectra calculated yet. Run get_reduced_spectra to calculate.")
 
-		self._write_file(fname, final_wvs, final_sps)
+		self._write_file(fname, final_wvs, final_sps, final_errs, final_stat_errs, final_calib_fracs)
 
-	def _write_file(self, fname, final_wvs, final_sps):
+	def save_output_spectra(self, out_dir):
+
+		final_sps = getattr(self, 'final_sps', None)
+		final_wvs = getattr(self, 'final_wvs', None)
+		final_errs = getattr(self, 'final_errs', None)
+		final_stat_errs = getattr(self, 'final_stat_errs', None)
+		final_calib_fracs = getattr(self, 'final_calib_fracs', None)
+
+		if final_sps is None:
+			raise ValueError("No final spectra calculated yet. Run get_reduced_spectra to calculate.")
+
+		os.makedirs(out_dir, exist_ok=True)
+		paths = {}
+		for grism_type in sorted(final_sps.keys()):
+			path = os.path.join(out_dir, self.get_output_basename(grism_type=grism_type) + '.txt')
+			self._write_file(
+				path,
+				{grism_type: final_wvs[grism_type]},
+				{grism_type: final_sps[grism_type]},
+				None if final_errs is None else {grism_type: final_errs[grism_type]},
+				None if final_stat_errs is None else {grism_type: final_stat_errs[grism_type]},
+				None if final_calib_fracs is None else {grism_type: final_calib_fracs[grism_type]},
+			)
+			paths[grism_type] = path
+
+		combined_path = os.path.join(out_dir, self.get_output_basename() + '.txt')
+		self._write_file(combined_path, final_wvs, final_sps, final_errs, final_stat_errs, final_calib_fracs)
+		paths['combined'] = combined_path
+		return paths
+
+	def get_output_basename(self, grism_type=None):
+
+		sn_name, dateut = self._get_output_metadata()
+		parts = [sn_name, dateut]
+		if grism_type is not None:
+			parts.append(grism_type)
+		return '_'.join(parts)
+
+	def _get_output_metadata(self):
+
+		hh = get_header(self, 1)
+		object_tokens = hh['OBJECT'].split('_')
+		object_name = None
+		for token in object_tokens:
+			clean_token = re.sub(r'[^A-Za-z0-9+-]', '', token)
+			if re.match(r'^SN[0-9A-Za-z+-]+$', clean_token, re.IGNORECASE):
+				object_name = clean_token
+				break
+		if object_name is None:
+			object_name = re.sub(r'[^A-Za-z0-9+-]', '', object_tokens[-1])
+		date_obs = hh['DATE-OBS'].replace('-', '').replace(':', '').replace('.', '')
+		return object_name, date_obs
+
+	def _write_file(self, fname, final_wvs, final_sps, final_errs=None,
+					final_stat_errs=None, final_calib_fracs=None):
 
 		hh = get_header(self, 1)
 
 		grism_types = list(final_sps.keys())
-		file_info = "# TELESCOPE: GTC \n# INSTRUMENT: EMIR \n# OBJECT: %s \n# GRISM: %s \n# DATE OBS: %s\n# N ABBA CYCLES: %s\n# EXP TIME PER EXPOSURE: %s\n# TOTAL EXP TIME: %s\n# AIRMASS: %.08F\n"
+		file_info = "# TELESCOPE: GTC \n# INSTRUMENT: EMIR \n# OBJECT: %s \n# GRISM: %s \n# DATE OBS: %s\n# N ABBA CYCLES: %s\n# EXP TIME PER EXPOSURE: %s\n# TOTAL EXP TIME: %s\n# AIRMASS: %.08F\n# CALIB_FRAC_UNCERTAINTY: %s\n# COLUMNS: wavelength_A flux flux_err flux_err_stat\n"
 		fi = file_info%(hh['OBJECT'],
                         str(grism_types),
                         hh['DATE-OBS'],
 						str([len(self.object_files[gr])//4 for gr in grism_types]),
                         str([hh['EXPTIME']]*len(grism_types)),
                         str([hh['EXPTIME']*len(self.object_files[gr]) for gr in grism_types]),
-                        hh['AIRMASS']
+                        hh['AIRMASS'],
+						str(final_calib_fracs)
                         )
 
 		# concatenate all grisms and sort by wavelength (YJ then HK)
 		all_wave = np.concatenate([final_wvs[k] for k in grism_types])
 		all_flux = np.concatenate([final_sps[k] for k in grism_types])
+		if final_errs is None:
+			all_err = np.full(all_flux.shape, np.nan)
+		else:
+			all_err = np.concatenate([final_errs.get(k, np.full(final_sps[k].shape, np.nan)) for k in grism_types])
+		if final_stat_errs is None:
+			all_stat_err = np.full(all_flux.shape, np.nan)
+		else:
+			all_stat_err = np.concatenate([final_stat_errs.get(k, np.full(final_sps[k].shape, np.nan)) for k in grism_types])
 		order = np.argsort(all_wave)
-		all_wave, all_flux = all_wave[order], all_flux[order]
+		all_wave = all_wave[order]
+		all_flux = all_flux[order]
+		all_err = all_err[order]
+		all_stat_err = all_stat_err[order]
 
 		with open(fname, 'w') as f:
 			f.write(fi)
-			for w, s in zip(all_wave, all_flux):
+			for w, s, e, es in zip(all_wave, all_flux, all_err, all_stat_err):
 				if np.isnan(s): continue
-				f.write('%E\t%E\n'%(w,s))
+				f.write('%E\t%E\t%E\t%E\n'%(w,s,e,es))
 	
-
-
-
-
-

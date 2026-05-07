@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-EMIR pipeline driver script.
+EMIR interactive pipeline driver script.
+
+Mirrors reduce.py but adds two interactive matplotlib windows per grism:
+  1. Standard-star sensitivity function fit — drag sliders to position the
+     spline knots used to fit the std-star continuum.
+  2. SN position finder — drag sliders to mark the A (positive) and B
+     (negative) spectral trace rows in the ABBA image.
+
+Both windows show a "Finalize" button; clicking it saves the chosen
+parameters to <OB>/results/interactive_parameters.pkl and closes the
+window. Re-running the script will pre-load those saved values as
+initial slider positions.
 
 Usage
 -----
-    python reduce.py <SN_OB> <STD_OB> [options]
+    python reduce_interactive.py <SN_OB> <STD_OB> [options]
 
 Positional arguments
     SN_OB     Name or full path of the supernova observation directory.
@@ -12,19 +23,22 @@ Positional arguments
 
 Optional arguments
     --data-dir PATH   Root directory that contains the OB folders.
-                      Defaults to $EMIR_DATA_DIR if set, otherwise the
-                      current working directory.
-    --grisms  G ...   One or more grisms to reduce (e.g. YJ HK).
-                      Defaults to all grisms found in the QC file.
+                      Defaults to $EMIR_DATA_DIR if set, otherwise cwd.
+    --grisms  G ...   Grism(s) to reduce (e.g. YJ HK).
+                      Defaults to all grisms common to both QC files.
     --clean           Delete existing results and start fresh.
-    --no-plot         Do not display an interactive plot window.
+    --no-plot         Do not display the final spectrum window.
+    --linear          Use linear y-axis scale instead of log.
     --out-dir PATH    Where to write the final spectrum and figure.
                       Defaults to <SN_OB>/results/.
+    --skip-sens-interactive
+                      Skip the interactive sensitivity function fit and
+                      use any previously saved parameters (or defaults).
 
 Example
 -------
-    python reduce.py OB0001 OB0002
-    python reduce.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX --grisms YJ
+    python reduce_interactive.py OB0001 OB0002
+    python reduce_interactive.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX --grisms YJ
 """
 
 import argparse
@@ -32,21 +46,28 @@ import os
 import sys
 
 # ------------------------------------------------------------------
-# Make sure the src/ directory is on the path regardless of where
-# the script is called from.
+# src/ on the path regardless of working directory
 # ------------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(SCRIPT_DIR, 'src')
 sys.path.insert(0, SRC_DIR)
 os.environ.setdefault('EMIR_PIPE', SRC_DIR)
 
-import numpy as np
+# Interactive matplotlib backend must be set before importing pyplot
 import matplotlib
+matplotlib.use('TkAgg')
+
+import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 
 from Observation import Observation
 from reduction_tools import get_std_magnitudes
+from interactive_reduction_tools import (
+    interactive_SN_position_finder,
+    interactive_sens_function_fit,
+    get_parameters,
+)
 
 
 # ------------------------------------------------------------------
@@ -55,7 +76,7 @@ from reduction_tools import get_std_magnitudes
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description='Reduce a GTC/EMIR long-slit spectrum end-to-end.',
+        description='Interactively reduce a GTC/EMIR long-slit spectrum.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -65,25 +86,27 @@ def parse_args():
                    help='Root directory containing the OB folders '
                         '(default: $EMIR_DATA_DIR or cwd)')
     p.add_argument('--grisms', nargs='+', default=None,
-                   help='Grism(s) to reduce, e.g. YJ HK (default: all in QC file)')
+                   help='Grism(s) to reduce, e.g. YJ HK (default: all common grisms)')
     p.add_argument('--clean', action='store_true',
                    help='Delete existing results and start fresh')
     p.add_argument('--no-plot', action='store_true',
-                   help='Skip the interactive plot window')
+                   help='Skip the final interactive spectrum window')
     p.add_argument('--linear', action='store_true',
                    help='Use linear y-axis scale instead of log')
     p.add_argument('--out-dir', default=None,
                    help='Output directory for spectrum and figure '
                         '(default: <SN_OB>/results/)')
+    p.add_argument('--skip-sens-interactive', action='store_true',
+                   help='Skip interactive sensitivity function fit; '
+                        'use saved parameters or defaults')
     return p.parse_args()
 
 
 # ------------------------------------------------------------------
-# Helpers
+# Helpers (shared with reduce.py)
 # ------------------------------------------------------------------
 
 def resolve_ob_path(ob_arg, data_dir):
-    """Return an absolute path for an OB argument."""
     if os.path.isabs(ob_arg):
         return ob_arg
     candidate = os.path.join(data_dir, ob_arg)
@@ -118,7 +141,8 @@ def section(msg):
 # Main reduction logic
 # ------------------------------------------------------------------
 
-def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
+def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir,
+           linear=False, skip_sens_interactive=False):
 
     section('Initialising observations')
     print('  SN  :', sn_path)
@@ -134,16 +158,18 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
         osn = Observation(sn_path)
         ost = Observation(std_path)
 
-    # Exclude acquisition images: those have GRISM='OPEN' in the QC table.
-    # _get_available_grisms() returns all unique FILTER values, including J/H/K
-    # from imaging frames, so we filter them out here.
-    # Use the intersection of SN and std grisms — both must have the data.
     def spectro_grisms_for(obs):
         return set(row['FILTER'] for row in obs.qc.object_table if row['GRISM'] != 'OPEN')
 
     sn_grisms  = spectro_grisms_for(osn)
     std_grisms = spectro_grisms_for(ost)
     common_grisms = sorted(sn_grisms & std_grisms)
+
+    if not common_grisms:
+        raise ValueError(
+            'No common spectroscopic grisms found between %s and %s'
+            % (sn_path, std_path)
+        )
 
     if sn_grisms - std_grisms:
         print('  Warning: grism(s) %s present in SN but not in std star — skipping'
@@ -161,9 +187,12 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
 
     print('  Grisms to reduce:', grisms)
 
-    # ------ per-grism reduction ------
+    # ------ per-grism reduction + interactive steps ------
+    sn_kwargs = {}   # keyed by grism
+
     for grism in grisms:
 
+        # --- SN ABBA ---
         section('Grism %s — SN reduction' % grism)
         if abba_done(sn_path, grism):
             print('  ABBA already exists, skipping rectification')
@@ -172,6 +201,7 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
             osn.rectify_and_analyze('object', grism)
             osn.ABBA_subtract(grism)
 
+        # --- Std ABBA ---
         section('Grism %s — standard-star reduction' % grism)
         if abba_done(std_path, grism):
             print('  ABBA already exists, skipping rectification')
@@ -180,11 +210,38 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
             ost.rectify_and_analyze('object', grism)
             ost.ABBA_subtract(grism)
 
-        if sens_done(std_path, grism):
-            print('  Sensitivity function already exists, skipping')
+        # --- Interactive sensitivity function fit ---
+        if not skip_sens_interactive:
+            section('Grism %s — interactive sensitivity function fit' % grism)
+            print('  Adjust the spline knots to fit the std-star continuum.')
+            print('  Click "Finalize" when done.\n')
+            std_kwargs = interactive_sens_function_fit(ost, grism)
+            if std_kwargs is None or 'sample_points' not in std_kwargs:
+                raise RuntimeError(
+                    'Interactive sensitivity fit for grism %s was closed before '
+                    'clicking Finalize' % grism
+                )
         else:
-            section('Grism %s — sensitivity function' % grism)
-            ost.make_sens_function(grism)
+            # Use saved parameters (or defaults) to (re)build the sens function
+            if sens_done(std_path, grism):
+                print('  Sensitivity function already exists, skipping')
+            else:
+                section('Grism %s — sensitivity function (non-interactive)' % grism)
+                std_kwargs = get_parameters(ost, grism)
+                ost.make_sens_function(grism, **std_kwargs)
+
+        # --- Interactive SN position finder ---
+        section('Grism %s — interactive SN position finder' % grism)
+        print('  Drag the sliders to align the extraction window with the SN trace.')
+        print('  Click "Finalize" when done.\n')
+        sn_result = interactive_SN_position_finder(osn, grism)
+        if sn_result is None or 'SN_position' not in sn_result:
+            raise RuntimeError(
+                'Interactive SN position finder for grism %s was closed before '
+                'clicking Finalize' % grism
+            )
+        sn_kwargs[grism] = sn_result
+        print('  SN position saved:', sn_kwargs[grism].get('SN_position'))
 
     # ------ magnitude lookup ------
     section('Fetching standard-star 2MASS magnitudes from Simbad')
@@ -195,18 +252,22 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
     results = {}
     for grism in grisms:
         print('  Grism %s ...' % grism)
-        wave, flux = osn.get_reduced_spectrum(magnitudes, ost, grism)
-        results[grism] = (wave, flux)
+        wave, flux, flux_err, flux_err_stat = osn.get_reduced_spectrum(
+            magnitudes, ost, grism, **sn_kwargs.get(grism, {})
+        )
+        results[grism] = (wave, flux, flux_err, flux_err_stat)
 
     # ------ save spectrum ------
     if out_dir is None:
         out_dir = os.path.join(sn_path, 'results')
     os.makedirs(out_dir, exist_ok=True)
 
-    sn_name = os.path.basename(sn_path.rstrip('/'))
-    spec_path = os.path.join(out_dir, '%s_spectrum.txt' % sn_name)
-    osn.save_spectrum(spec_path)
-    print('\n  Spectrum saved to', spec_path)
+    output_paths = osn.save_output_spectra(out_dir)
+    combined_spec_path = output_paths['combined']
+    print('\n  Spectra saved to')
+    for grism in sorted(k for k in output_paths if k != 'combined'):
+        print('   %s : %s' % (grism, output_paths[grism]))
+    print('   combined : %s' % combined_spec_path)
 
     # ------ plot ------
     section('Plotting')
@@ -216,9 +277,14 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
     mpl.rcParams.update({'font.size': 13, 'font.family': 'serif'})
     fig, ax = plt.subplots(figsize=(14, 5))
 
-    for i, (grism, (wave, flux)) in enumerate(results.items()):
+    for i, (grism, (wave, flux, flux_err, flux_err_stat)) in enumerate(results.items()):
         color = colors.get(grism, default_colors[i % len(default_colors)])
         ax.plot(wave, flux, color=color, lw=0.8, label=grism)
+        upper = flux + flux_err
+        lower = flux - flux_err
+        if not linear:
+            lower = np.where(lower > 0, lower, np.nan)
+        ax.fill_between(wave, lower, upper, color=color, alpha=0.18, linewidth=0)
 
     # telluric bands
     telluric_bands = [(13400, 14500), (18000, 20000)]
@@ -229,20 +295,23 @@ def reduce(sn_path, std_path, grisms, clean, no_plot, out_dir, linear=False):
 
     ax.set_xlabel(r'Wavelength ($\AA$)')
     ax.set_ylabel(r'Flux (erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$)')
-    ax.set_title('%s — GTC/EMIR NIR spectrum' % sn_name)
+    plot_basename = osn.get_output_basename()
+    ax.set_title('%s — GTC/EMIR NIR spectrum' % plot_basename.split('_')[0])
     ax.legend()
     if not linear:
         ax.set_yscale('log')
 
-    fig_path = os.path.join(out_dir, '%s_spectrum.png' % sn_name)
-    fig.savefig(fig_path, dpi=150, bbox_inches='tight')
-    print('  Figure saved to', fig_path)
+    fig_path = os.path.join(out_dir, plot_basename + '.png')
 
     if not no_plot:
         plt.show()
 
+    fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+    print('  Figure saved to', fig_path)
+
     section('Done')
-    print('  Spectrum : %s' % spec_path)
+    print('  YJ/HK/combined spectra written in %s' % out_dir)
+    print('  Combined : %s' % combined_spec_path)
     print('  Figure   : %s' % fig_path)
 
 
@@ -270,6 +339,7 @@ def main():
         no_plot=args.no_plot,
         out_dir=args.out_dir,
         linear=args.linear,
+        skip_sens_interactive=args.skip_sens_interactive,
     )
 
 
