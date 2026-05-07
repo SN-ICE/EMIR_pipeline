@@ -2,7 +2,8 @@
 """
 EMIR interactive pipeline driver script.
 
-Mirrors reduce.py but adds two interactive matplotlib windows per grism:
+Mirrors the spectroscopy reduction workflow but adds two interactive
+matplotlib windows per grism:
   1. Standard-star sensitivity function fit — drag sliders to position the
      spline knots used to fit the std-star continuum.
   2. SN position finder — drag sliders to mark the A (positive) and B
@@ -15,7 +16,7 @@ initial slider positions.
 
 Usage
 -----
-    python reduce_interactive.py <SN_OB> <STD_OB> [options]
+    python reduce_spec.py <SN_OB> <STD_OB> [options]
 
 Positional arguments
     SN_OB     Name or full path of the supernova observation directory.
@@ -37,12 +38,13 @@ Optional arguments
 
 Example
 -------
-    python reduce_interactive.py OB0001 OB0002
-    python reduce_interactive.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX --grisms YJ
+    python reduce_spec.py OB0001 OB0002
+    python reduce_spec.py OB0001 OB0002 --data-dir ~/Desktop/EMIR_REDUX --grisms YJ
 """
 
 import argparse
 import os
+import shutil
 import sys
 
 # ------------------------------------------------------------------
@@ -58,16 +60,193 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 import numpy as np
+from astropy.io import fits
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 
-from Observation import Observation
+from Observation import Observation, DEFAULT_FLAT_FIELD_FILE, FLAT_FIELD_FILENAME
 from reduction_tools import get_std_magnitudes
 from interactive_reduction_tools import (
     interactive_SN_position_finder,
     interactive_sens_function_fit,
     get_parameters,
 )
+from templates import OBS_RES_TEMPLATE
+
+
+# ------------------------------------------------------------------
+# Observation fallback patches
+# ------------------------------------------------------------------
+
+def _iter_sibling_ob_dirs(self):
+    parent_dir = os.path.dirname(self.obs_dir.rstrip('/'))
+    if not os.path.isdir(parent_dir):
+        return
+
+    for entry in sorted(os.listdir(parent_dir)):
+        sibling_dir = os.path.join(parent_dir, entry)
+        if sibling_dir == self.obs_dir:
+            continue
+        if os.path.isdir(sibling_dir) and entry.startswith('OB'):
+            yield sibling_dir
+
+
+def _collect_calibration_files_from_directory(path, discovered, expected_filters):
+    if not os.path.isdir(path):
+        return
+
+    for fname in sorted(os.listdir(path)):
+        if not fname.lower().endswith((".fits", ".fit", ".fts")):
+            continue
+
+        try:
+            header = fits.getheader(os.path.join(path, fname))
+        except OSError:
+            continue
+
+        filter_name = header.get('FILTER')
+        if filter_name is None:
+            continue
+        if expected_filters is not None and filter_name not in expected_filters:
+            continue
+
+        discovered.setdefault(filter_name, [])
+        if fname not in discovered[filter_name]:
+            discovered[filter_name].append(fname)
+
+
+def _discover_files_from_headers(self, path):
+    """
+    Groups FITS files in a directory by FILTER and supplements missing
+    calibration grisms from sibling OB folders under the same parent.
+    """
+    discovered = {}
+    expected_filters = set(
+        row['FILTER'] for row in self.qc.object_table if row['GRISM'] != 'OPEN'
+    )
+
+    _collect_calibration_files_from_directory(path, discovered, expected_filters)
+
+    missing_filters = expected_filters - set(discovered.keys())
+    section_name = os.path.basename(path.rstrip('/'))
+    for sibling_dir in self._iter_sibling_ob_dirs():
+        if not missing_filters:
+            break
+        sibling_section = os.path.join(sibling_dir, section_name)
+        _collect_calibration_files_from_directory(
+            sibling_section,
+            discovered,
+            missing_filters,
+        )
+        missing_filters = expected_filters - set(discovered.keys())
+
+    return discovered
+
+
+def _resolve_data_file(self, analysis_type, fname):
+    local_path = os.path.join(self.obs_dir, analysis_type, fname)
+    if os.path.exists(local_path):
+        return local_path
+
+    for sibling_dir in self._iter_sibling_ob_dirs():
+        candidate = os.path.join(sibling_dir, analysis_type, fname)
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
+
+
+def _copy_files_with_sibling_fallback(self, analysis_type, grism_type):
+    try:
+        file_dict = getattr(self, "%s_files" % analysis_type)
+        data_file_list = file_dict[grism_type]
+        if analysis_type not in ['object', 'arc', 'flat']:
+            raise ValueError(
+                "'%s' is not a valid analysis type (options: 'object', 'arc', 'flat')"
+                % analysis_type
+            )
+
+        for fname in data_file_list:
+            source_path = self._resolve_data_file(analysis_type, fname)
+            if source_path is None:
+                print('WARNING: Qualty control file lists a file that does not exist (%s)' % fname)
+                continue
+            target_path = os.path.join(self.emir_path, "data", fname)
+            shutil.copyfile(source_path, target_path)
+
+    except KeyError:
+        raise KeyError(
+            "%s is not a valid grism type for %s analysis (options: %s)"
+            % (grism_type, analysis_type, str(list(file_dict.keys())))
+        )
+
+
+def _generate_flat_field_with_sibling_fallback(self):
+    """
+    Takes flat field files and generates the flat field file for EMIR analysis,
+    allowing missing flats to be sourced from sibling OB folders.
+    """
+    for fil in self.flat_files:
+        ff_coadd = None
+        for f in self.flat_files[fil]:
+            flat_path = self._resolve_data_file('flat', f)
+            if flat_path is None:
+                raise FileNotFoundError(
+                    "Missing flat-field file %s for observation %s" % (f, self.name)
+                )
+            fi = fits.open(flat_path)
+            im = fi[-1].data
+            ff_coadd = im if ff_coadd is None else ff_coadd + im
+            fi.close()
+
+        emir_defaults_dir = os.path.join(os.environ['EMIR_PIPE'], 'default_EMIR_files')
+        default_fits = fits.open(os.path.join(emir_defaults_dir, DEFAULT_FLAT_FIELD_FILE))
+        default_fits[0].data = ff_coadd
+        default_fits.writeto(
+            os.path.join(self.emir_path, 'data', FLAT_FIELD_FILENAME % fil),
+            overwrite=True,
+        )
+        default_fits.close()
+
+
+def _generate_obs_res_with_sibling_fallback(self, analysis_type, grism_type):
+    """
+    Generates EMIR obs-result YAML files and keeps borrowed arc/flat files in
+    the run even when they live in another sibling OB folder.
+    """
+    file_list = ''
+    with open(os.path.join(self.emir_path, '%s_obs_res_%s.yaml' % (analysis_type, grism_type)), 'w') as f:
+        try:
+            all_files = getattr(self, "%s_files" % analysis_type)[grism_type]
+            for i, filename in enumerate(all_files):
+                fpath = self._resolve_data_file(analysis_type, filename)
+                if fpath is None:
+                    print("WARNING: skipping file %s" % filename)
+                    continue
+
+                if analysis_type == 'arc':
+                    file_list += " - %s\n" % filename
+                else:
+                    file_list = " - %s\n" % filename
+                    text = OBS_RES_TEMPLATE % (self.name + "_" + filename.split('-')[0], file_list)
+                    f.write(text)
+                    if i < len(all_files) - 1:
+                        f.write('---\n')
+
+            if analysis_type == 'arc' and file_list:
+                text = OBS_RES_TEMPLATE % (self.name + '_arc', file_list)
+                f.write(text)
+
+        except KeyError:
+            pass
+
+
+Observation._iter_sibling_ob_dirs = _iter_sibling_ob_dirs
+Observation._discover_files_from_headers = _discover_files_from_headers
+Observation._resolve_data_file = _resolve_data_file
+Observation._copy_files = _copy_files_with_sibling_fallback
+Observation._generate_flat_field = _generate_flat_field_with_sibling_fallback
+Observation._generate_obs_res = _generate_obs_res_with_sibling_fallback
 
 
 # ------------------------------------------------------------------
